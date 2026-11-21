@@ -21,12 +21,12 @@ STEPS, SAMPLER = 8, "euler"
 MEGAPIXELS = [0.4, 0.6, 0.8, 1.0]
 MAX_FRAMES = 361   # 15 s, H3's 17k+5 grid
 GREY = 0x808080
-REF_MEGAPIXELS = 0.5
+REF_MEGAPIXELS = 1.0   # as Henge sends every picture: capped at 1 MP, at H3's largest reference size ("max")
 GAP = "{details}"
 
 # Graph nodes added to h3_graph's.
 GUIDE, ADD_GUIDE, DESCRIBER, DESCRIBE, FILL = "60", "61", "62", "63", "64"
-SAM_LOADER, MARK_NODE = "71", "72"
+SAM_LOADER, MARK_NODE, TEMPORAL = "71", "72", "73"
 MASK_MODEL, MASK, SIZE, BACKDROP, CUTOUT, SMALL = "65", "66", "67", "68", "69", "70"
 
 CHARACTER_INSTRUCTION = (
@@ -133,6 +133,13 @@ Keep the source soundtrack when connected; do not invent dialogue.
 non_diegetic_music:
 No additional music requested."""
 MOTION_TRIGGER = "motion_transfer:"
+# Motion Transfer TARA v1.0: the LoRA the author trained for several people, objects or vehicles, run his way: the
+# video as a native <Video 1> reference (no Add Guide), with his temporal alignment patch from ComfyUI-BFSNodes
+# (BFSMiniMaxH3NativeTemporal) at the training defaults. H3 takes a reference video of 2 to 15 seconds.
+TARA_LORA = "minimax_h3_motion_transfer_tara_v1.0_ref2va.safetensors"
+TARA_NODE = "BFSMiniMaxH3NativeTemporal"
+TARA_MIN_FRAMES = 56   # the first 17k+5 count of at least 2 s at 24 fps
+METHODS = {"tara": "TARA · several people", "guide": "Motion Transfer v1.0"}
 MOTION_REF_MEGAPIXELS = 1.0   # the workflow's: each picture capped at 1 MP, sent at H3's largest reference size
 
 MODES = {
@@ -151,6 +158,21 @@ def birefnet():
         return h3_graph.pick_file([BIREFNET], folder_paths.get_filename_list("background_removal"))
     except KeyError:
         return None
+
+
+def tara_why(files=None):
+    """Why TARA can't run here, in words, or None."""
+    files = h3_graph.available() if files is None else files
+    lack = []
+    if not h3_graph.pick_file([TARA_LORA], files):
+        lack.append(TARA_LORA + " (gear menu › Models › Swap and Motion)")
+    try:
+        import nodes
+        if TARA_NODE not in nodes.NODE_CLASS_MAPPINGS:
+            lack.append("the ComfyUI-BFSNodes node pack (on RunPod, ENABLE_SWAP=true installs it)")
+    except ImportError:
+        pass
+    return ("TARA needs " + " and ".join(lack) + ".") if lack else None
 
 
 def sam():
@@ -188,7 +210,7 @@ def status(files=None):
     for key, mode in MODES.items():
         lack = missing + [f for f in (TURBO, mode["lora"]) if not h3_graph.pick_file([f], files)]
         modes[key] = ("%s needs %s (gear menu › Models › Swap)." % (mode["name"], h3_graph.and_list(lack))) if lack else None
-    return {"modes": modes, "motionTemplate": MOTION_TEMPLATE, "describe": bool(describer(files)), "megapixels": MEGAPIXELS, "maxSeconds": MAX_FRAMES // 24,
+    return {"modes": modes, "methods": {"tara": tara_why(files), "guide": None}, "motionTemplate": MOTION_TEMPLATE, "describe": bool(describer(files)), "megapixels": MEGAPIXELS, "maxSeconds": MAX_FRAMES // 24,
             "background": bool(birefnet()), "mark": bool(sam())}
 
 
@@ -246,7 +268,7 @@ def motion_prompt(prompt):
     return prompt if prompt.startswith(MOTION_TRIGGER) else MOTION_TRIGGER + "\n" + prompt
 
 
-def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE):
+def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE, method="guide"):
     """The graph that swaps the picture's character (or head) into a video.
 
     clip: the new clip: the picture as <Picture 1>, the seed, and the prompt (made here from the template).
@@ -254,11 +276,15 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     MOSS-Image's text model describes the picture. model: the model family to swap on; the author's is the base
     model with the DMD turbo LoRA (as is any other non-turbo family), and a turbo family runs on its own. mark: {x, y, opacity}, a point on the first frame: only the person
     there is replaced (Character only), painted red on the guide and named in the prompt.
-    Motion: clip carries up to 9 pictures, the person's own prompt and LoRAs (details is not used).
+    Motion: clip carries up to 9 pictures, the person's own prompt and LoRAs (details is not used); method "tara" runs
+    Motion Transfer TARA v1.0 the author's way, "guide" Motion Transfer v1.0.
     """
     files = h3_graph.available() if files is None else files
     spec = MODES[mode]
     motion = mode == "motion"
+    tara = motion and method == "tara"
+    if tara and tara_why(files):
+        raise h3_graph.Missing(tara_why(files))
     text = describer(files) if not motion and not details.strip() else None
     if not motion and not details.strip() and not text:
         raise h3_graph.Missing("Describe the %s in words: describing the picture needs MOSS-Image's text encoder "
@@ -268,7 +294,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     clip = dict(clip, profile=model, refmods=None, realism=None,
                 steps=profile["steps"] if own else STEPS, sampler=profile["sampler"] if own else SAMPLER,
                 scheduler=(profile.get("scheduler") or spec["scheduler"]) if own else spec["scheduler"],
-                loras=([] if own else [{"name": TURBO, "strength": 1.0}]) + [{"name": spec["lora"], "strength": 1.0}]
+                loras=([] if own else [{"name": TURBO, "strength": 1.0}]) + [{"name": TARA_LORA if tara else spec["lora"], "strength": 1.0}]
                 + (list(clip.get("loras") or []) if motion else []),
                 prompt=motion_prompt(clip["prompt"]) if motion
                 else prompt_of(mode, details, bool(mark)) if details.strip() else template_of(mode, bool(mark)))
@@ -287,6 +313,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
                 "image": cond[key], "upscale_method": "lanczos", "megapixels": MOTION_REF_MEGAPIXELS, "resolution_steps": 32}}
             cond[key] = [small, 0]
     else:
+        cond["ref_image_size"] = "max"
         reference = [picture, 0]
         remover = birefnet()
         if remover:
@@ -311,6 +338,15 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
         graph[ph3_bridge.UPSAMPLED_NODE] = {"class_type": "PreviewAny", "inputs": {"source": [FILL, 0]}}
         cond["prompt"] = [FILL, 0]
 
+    if tara:
+        # The video as <Video 1>, aligned frame by frame by the patch, which the live preview and guider then use.
+        cond["ref_videos.ref_video_0"] = [GUIDE, 0]
+        graph[TEMPORAL] = {"class_type": TARA_NODE, "inputs": {
+            "model": ["5", 0], "motion_video_index": 1, "strength": 2.0, "window_seconds": 0.2, "falloff_seconds": 0.25, "max_penalty": 6.0}}
+        graph["9"]["inputs"]["model"] = [TEMPORAL, 0]
+        graph.pop("17", None)
+        graph["18"]["inputs"]["audio"] = [GUIDE, 1]
+        return graph
     guide = mark_nodes(graph, mark) if mark else [GUIDE, 0]
     graph[ADD_GUIDE] = {"class_type": "MiniMaxH3AddGuide", "inputs": {
         "positive": ["10", 0], "latent": ["10", 1], "vae": ["3", 0], "audio_vae": ["4", 0], "image": guide,

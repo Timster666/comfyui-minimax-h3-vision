@@ -59,6 +59,8 @@ const state = {
   refs: [],                  // every uploaded image: {id, name, file, added, img, tone}
   attached: [],              // ids of the images in the prompt bar
   motion: null,              // Motion from: the id of the video that gives a render its motion (Motion Transfer)
+  motionMethod: "tara",      // "tara" (Motion Transfer TARA v1.0, several people) or "guide" (Motion Transfer v1.0)
+  motionWhy: { tara: null },  // why a method can't run here (from GET swap)
   pickingMotion: false,      // the next video clicked in the gallery becomes Motion from
   library: { open: false, source: "uploads", selected: null, selectedGen: null, query: "", sort: "newest" },
   clips: [],
@@ -286,7 +288,7 @@ function summary() {
       s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   }
   if (!isImage() && state.motion && motionSource(state.motion))
-    return ["Motion from a video", modelOf(s.model)?.scheduler === "hyperflow" ? s.model + " (can't do Motion: pick another model)" : s.model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
+    return ["Motion from a video (" + (motionMethodNow() === "tara" ? "TARA" : "v1.0") + ")", modelOf(s.model)?.scheduler === "hyperflow" ? s.model + " (can't do Motion: pick another model)" : s.model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
       n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   return [s.model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
     s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
@@ -318,7 +320,7 @@ function saveUi() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     state.drafts[draftKey()] = state.prompt;
-    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, perRow: state.perRow,
+    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, motionMethod: state.motionMethod, perRow: state.perRow,
       prompt: state.drafts.video, imagePrompt: state.drafts.image, imageNegative: state.negative, negativeOpen: state.negativeOpen,
       kleinSettings: state.kleinSettings, kleinPrompt: state.drafts.klein, kleinSlots: state.kleinSlots,
       kleinMode: state.kleinMode, kleinSwapSlots: state.kleinSwapSlots, kleinSwapPrompt: state.drafts.kleinSwap, kleinSwapMask: state.kleinSwapMask,
@@ -652,9 +654,24 @@ function motionChip() {
   if (!c) return `<button class="add-ref motion-add ${state.pickingMotion ? "on" : ""}" data-act="pickMotion" title="Take the motion of a video in the gallery: your pictures and prompt say who performs it">${ICON.swap}${state.pickingMotion ? "Click a video…" : "Motion from…"}</button>`;
   return `<div class="motion-chip" title="This render takes the motion, timing, camera and sound of this video (Motion Transfer)">
       <video src="${clipUrl(c)}" muted loop autoplay playsinline></video>
-      <span class="motion-text"><b>Motion from this video</b><button class="link" data-act="motionTemplate">Use the author's prompt</button></span>
+      <span class="motion-text"><b>Motion from this video</b>
+        <select class="motion-method" data-change="motionMethod" aria-label="How the motion is transferred" title="${esc(motionHint())}">
+          <option value="tara" ${motionMethodNow() === "tara" ? "selected" : ""} ${state.motionWhy.tara ? "disabled" : ""}>TARA · several people</option>
+          <option value="guide" ${motionMethodNow() === "guide" ? "selected" : ""}>Motion Transfer v1.0</option>
+        </select>
+        <button class="link" data-act="motionTemplate">Use the author's prompt</button></span>
       <button class="ref-x motion-x" data-act="clearMotion" aria-label="Stop taking the motion of this video">${ICON.x}</button>
     </div>`;
+}
+// TARA when it can run here, else Motion Transfer v1.0.
+const motionMethodNow = () => state.motionMethod === "tara" && !state.motionWhy.tara ? "tara" : "guide";
+function motionHint() {
+  return motionMethodNow() === "tara"
+    ? "TARA: the author's LoRA for several people, objects or vehicles. The video is a native reference, kept in step frame by frame (BFS temporal alignment). Needs 2 to 15 s of video."
+    : "Motion Transfer v1.0: the video traced as a guide, frame by frame. The author's default for one performer." + (state.motionWhy.tara ? " " + state.motionWhy.tara : "");
+}
+async function loadMotionStatus() {
+  try { const st = await api("GET", "swap"); state.motionWhy = { tara: st.methods?.tara || null }; } catch {}
 }
 function setMotion(id) {
   state.motion = id;
@@ -2412,7 +2429,8 @@ function generateBody() {
   return { body: { prompt, settings: s, kind: state.tab, negative: isImage() ? state.negative : undefined,
     slots: isKlein() ? state.kleinSlots : undefined, edit: editOn() ? state.imageEditSlot[0] : undefined,
     pictures: state.tab === "video" ? state.attached.filter((id) => state.refs.some((r) => r.id === id)) : undefined,
-    motion: state.tab === "video" && state.motion && motionSource(state.motion) ? state.motion : undefined } };
+    motion: state.tab === "video" && state.motion && motionSource(state.motion) ? state.motion : undefined,
+    motionMethod: motionMethodNow() } };
 }
 
 async function generate() {
@@ -3452,6 +3470,7 @@ const ACT = {
         realism: { on: !!c.realism, strength: c.realism || realismOf(state.settings).strength } },
       { sampler: c.sampler || "", scheduler: c.scheduler || "" });
     if (kindOf(c) === "video") state.motion = c.motion && motionSource(c.motion.from) ? c.motion.from : null;
+    if (c.motion?.method) state.motionMethod = c.motion.method;
     if (kindOf(c) === "image") {
       state.negative = c.negative != null ? c.negative : negativeDefault(c.model);
       // An edit comes back as an edit, with its picture when it's still in Add image.
@@ -3567,6 +3586,7 @@ const CHANGE = {
   res: (el) => { state.settings[sheetOn() ? "sheetRes" : swapOn() ? "swapRes" : "res"] = Number(el.value); render(); },
   swapLora: (el) => { state.kleinSettings.swapLora = el.value; render(); },
   swapModel: (el) => { SWAP.model = el.value; drawSwap(); },
+  motionMethod: (el) => { state.motionMethod = el.value; render(); saveUi(); },
   sheetRole: (el) => { state.prunaSheet.roles[Number(el.dataset.id)] = el.value; render(); saveUi(); },
   sampler: (el) => { state.settings.sampler = el.value; render(); },
   scheduler: (el) => { state.settings.scheduler = el.value; render(); },
@@ -4208,6 +4228,7 @@ async function load(first = true) {
       driveStatus();
       loadRefmods();
       loadFaces();
+      loadMotionStatus().then(render);
       const ui = data.ui || {};
       Object.assign(state.videoSettings, ui.settings || {});
       Object.assign(state.imageSettings, ui.imageSettings || {});
@@ -4269,6 +4290,7 @@ async function load(first = true) {
       const fromSubjects = (ui.subjects || []).flatMap((x) => x.refs || []);
       state.attached = [...new Set([...(ui.attached || []), ...fromSubjects])].filter((id) => state.refs.some((r) => r.id === id));
       state.motion = ui.motion && motionSource(ui.motion) ? ui.motion : null;
+      state.motionMethod = ui.motionMethod === "guide" ? "guide" : "tara";
       state.perRow = ui.perRow || 3;
       state.prompt = state.drafts[state.tab];
       state.caret = state.prompt.length;

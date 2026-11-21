@@ -58,7 +58,7 @@ motion, lips, camera and sound (first 15 s, at 0.4–1.0 MP in the video's shape
 person, **Head only** (experimental) just the head. The prompt is the author's template; its one gap, the character
 (or the face) in words, is typed in the dialog or, left empty, written from the picture by MOSS-Image's text model
 while it renders. It follows the published native-node workflow: the video as an `MiniMaxH3AddGuide` guide at frame 0,
-the picture as a reference on grey, 8 steps, Euler (Beta for heads), CFG 1. The templates are Henge's (MIT). With several
+the picture as a reference on grey (at up to 1 MP, H3's largest reference size, as Henge sends them), 8 steps, Euler (Beta for heads), CFG 1. The templates are Henge's (MIT). With several
 people in the shot, **Who to replace › Pick on the first frame** (Character, with SAM 3.1 in `models/checkpoints`)
 lets you click the one to replace: SAM 3 follows them through the clip and paints them red (solid, or see-through so
 the face shows), the prompt says to replace only the red-marked person, and **Check the mark** shows the painted
@@ -75,7 +75,11 @@ an object, a place or a style, and the prompt says which is which. **Use the aut
 `motion_transfer:` template in the prompt to edit. As in his native workflow: the video as a guide at frame 0,
 pictures at up to 1 MP each at H3's largest reference size, DMD 8-step turbo, Euler, CFG 1 on MiniMax H3's own model;
 another model in the Video settings is untested (turbo models run their own way). Your LoRAs are added; RefMods and
-Realism aren't.
+Realism aren't. The chip's menu picks the method: **TARA · several people** (default when installed: the author's Motion
+Transfer TARA v1.0 LoRA, trained for several people, objects or vehicles, run as in his native TARA workflow — the
+video as a native `<Video 1>` reference instead of a traced guide, with his temporal alignment patch from
+[ComfyUI-BFSNodes](https://github.com/alisson-anjos/ComfyUI-BFSNodes) at the training defaults; 2 to 15 s of video)
+or **Motion Transfer v1.0** (the traced guide, his default for one performer).
 
 **Refine faces** (optional, with Carasibana's [ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine),
 the `MiniMaxH3NativeAudioLock` node and the `face_yolov8m.pt` detector in `models/ultralytics/bbox`; on RunPod
