@@ -63,6 +63,7 @@ const state = {
   motionWhy: { tara: null },  // why a method can't run here (from GET swap)
   motionPeople: [],          // Motion's picked people: [{x, y, picture}], painted in PEOPLE_COLORS' order
   motionMarks: false,        // whether SAM 3.1 is here to mark them
+  motionTurbo: {},           // per model id that Motion can use: whether it runs its own way (a turbo build)
   pickingMotion: false,      // the next video clicked in the gallery becomes Motion from
   library: { open: false, source: "uploads", selected: null, selectedGen: null, query: "", sort: "newest" },
   clips: [],
@@ -730,6 +731,17 @@ $("ppFrameBox").addEventListener("click", (e) => {
   drawPeople(); saveUi();
 });
 
+// With Motion from a video, some Video settings are the recipe's or the video's: the settings say which.
+function motionNote(model) {
+  if (state.tab !== "video" || !state.motion || !motionSource(state.motion)) return "";
+  const turbo = state.motionTurbo[model.id];
+  const how = turbo === undefined ? "HyperFlow can't do Motion: pick another model."
+    : turbo ? `${esc(model.name)} runs its own way: its own steps and sampler, without the DMD LoRA (untested with these LoRAs).`
+    : `${esc(model.name)} gets the DMD 8-step turbo LoRA: 8 steps, Euler, whatever Steps says.`;
+  return `<div class="motion-note"><b>Motion from a video is on.</b> ${how} Aspect ratio and Length come from the video;
+    Realism and RefMods aren't used. Model, Resolution, Seed and LoRAs apply.</div>`;
+}
+
 // TARA when it can run here, else Motion Transfer v1.0.
 const motionMethodNow = () => state.motionMethod === "tara" && !state.motionWhy.tara ? "tara" : "guide";
 function motionHint() {
@@ -738,7 +750,12 @@ function motionHint() {
     : "Motion Transfer v1.0: the video traced as a guide, frame by frame. The author's default for one performer." + (state.motionWhy.tara ? " " + state.motionWhy.tara : "");
 }
 async function loadMotionStatus() {
-  try { const st = await api("GET", "swap"); state.motionWhy = { tara: st.methods?.tara || null }; state.motionMarks = !!st.mark; } catch {}
+  try {
+    const st = await api("GET", "swap");
+    state.motionWhy = { tara: st.methods?.tara || null };
+    state.motionMarks = !!st.mark;
+    state.motionTurbo = Object.fromEntries(st.models.map((m) => [m.id, m.turbo]));
+  } catch {}
 }
 function setMotion(id) {
   if (id !== state.motion) state.motionPeople = [];
@@ -1497,7 +1514,7 @@ function renderSettings() {
   const recPct = ((model.steps - minSteps) / (model.maxSteps - minSteps)) * 100;
   if (isKlein()) { box.innerHTML = kleinSettingsHTML(s, model, T, minSteps, stepSize, recPct); return; }
   if (isPruna()) { box.innerHTML = prunaSettingsHTML(s, model, T); return; }
-  box.innerHTML = `
+  box.innerHTML = motionNote(model) + `
     <div class="field">
       <label class="label" for="model">Model</label>
       <select class="select" id="model" data-change="model">
