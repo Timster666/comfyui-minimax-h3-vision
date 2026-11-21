@@ -79,7 +79,12 @@ Realism aren't. The chip's menu picks the method: **TARA · several people** (de
 Transfer TARA v1.0 LoRA, trained for several people, objects or vehicles, run as in his native TARA workflow — the
 video as a native `<Video 1>` reference instead of a traced guide, with his temporal alignment patch from
 [ComfyUI-BFSNodes](https://github.com/alisson-anjos/ComfyUI-BFSNodes) at the training defaults; 2 to 15 s of video)
-or **Motion Transfer v1.0** (the traced guide, his default for one performer).
+or **Motion Transfer v1.0** (the traced guide, his default for one performer). **Pick the people** on the chip: click each person
+on the video's first frame (up to 4) and choose which picture they become; SAM 3.1 follows each through the clip and
+paints them see-through in their colour (red, blue, green, yellow), and with the prompt left empty Vision writes the
+author's prompt for them (Henge's one- or several-person recipe with `motion_transfer:`), each picture described by
+MOSS-Image's text model; the people in the video are never described, so their looks don't leak. **Check the marks**
+shows the painted video first. The author recommends TARA for marked people.
 
 **Refine faces** (optional, with Carasibana's [ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine),
 the `MiniMaxH3NativeAudioLock` node and the `face_yolov8m.pt` detector in `models/ultralytics/bbox`; on RunPod

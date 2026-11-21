@@ -9,6 +9,8 @@ The templates and the describe instructions are Henge's (github.com/alisson-anjo
 The result is a new clip with the video's own sound.
 """
 
+import json
+
 import folder_paths
 
 from . import h3_graph, moss_bridge, ph3_bridge
@@ -16,6 +18,10 @@ from . import h3_graph, moss_bridge, ph3_bridge
 TURBO = "minimax_h3_dmd_ref2va_8step_turbo_pruned.safetensors"
 SAM = "sam3.1_multiplex_fp16.safetensors"   # Comfy-Org/SAM3.1, in models/checkpoints: marks the person to replace
 MARK_COLOR, MARK_NAME = "#DC463C", "red"     # Henge's red
+# Motion's picked people: Henge's colours in order, painted see-through ("translucent tints", as his prompt says).
+COLORS = [("red", "#DC463C"), ("blue", "#2D7DE1"), ("green", "#32B45A"), ("yellow", "#EBCD23")]
+PEOPLE_OPACITY = 0.5
+DESCRIBE_NODE, FILL_NODE = 200, 210   # one text-model description and one fill per picked person
 BIREFNET = "birefnet.safetensors"
 STEPS, SAMPLER = 8, "euler"
 MEGAPIXELS = [0.4, 0.6, 0.8, 1.0]
@@ -114,8 +120,44 @@ TRACK_IDENTITY = ("Each identity follows its marked person, regardless of screen
                   "crossings or occlusion. Preserve the guide person's orientation: a back view stays a back view; transfer only "
                   "the reference features visible from that angle. The reference supplies appearance, while the guide supplies "
                   "pose and facing direction. Keep absent people out of the shot.")
-MARKED = (" Replace only the %s-marked person; keep every other person unchanged. Remove all temporary color markers and text "
-          "tags. %s Do not add people, insets or duplicate characters." % (MARK_NAME, TRACK_IDENTITY))
+def marked_sentence(color):
+    """Henge's sentence after a one-person template: only the person marked in that colour is replaced."""
+    return (" Replace only the %s-marked person; keep every other person unchanged. Remove all temporary color markers "
+            "and text tags. %s Do not add people, insets or duplicate characters." % (color, TRACK_IDENTITY))
+
+
+MARKED = marked_sentence(MARK_NAME)
+
+
+def people_prompt(people):
+    """The prompt for Motion's picked people, with a {detailsN} gap for each one's picture N: Henge's one-person
+    template with his marked sentence, or his several-person recipe (edit_modes.multi_swap_prompt, 2D tints, no
+    labels), with motion_transfer: as the trigger. Nothing describes the people in the video: their looks would leak.
+    people: [{"picture": N, "color": name}] in Subject order."""
+    if len(people) == 1:
+        one = people[0]
+        return (CHARACTER_TEMPLATE.replace("body_swap:", MOTION_TRIGGER, 1).replace("<Picture 1>", "<Picture %d>" % one["picture"])
+                .replace(GAP, "{details%d}" % one["picture"]) + marked_sentence(one["color"]))
+    defs, swaps, names = [], [], []
+    for i, person in enumerate(people, 1):
+        picture = "<Picture %d>" % person["picture"]
+        defs.append("<Subject %d> is the character shown in %s: {details%d}. Their identity, face, hair, body shape, proportions "
+                    "and clothing define the %s-marked replacement." % (i, picture, person["picture"], person["color"]))
+        swaps.append("the %s-tinted person with <Subject %d>" % (person["color"], i))
+        names.append("<Subject %d>" % i)
+    colors = " and ".join(p["color"] for p in people)
+    replace = "Replace " + ", ".join(swaps[:-1]) + " and " + swaps[-1]
+    return (f"{MOTION_TRIGGER} subject_definitions: {' '.join(defs)} In the guide video, the translucent {colors} tints are "
+            f"temporary editing markers, not character appearance. {replace}. The guide video provides the scene, framing and the "
+            f"complete performance: body pose, gestures, head motion, gaze, speech and facial expressions.  "
+            f"summary: [video generation + references] {replace}, preserving the guide's camera, framing, timing and motion exactly.  "
+            f"detailed_description: [Shot 1] {', '.join(names[:-1])} and {names[-1]} take the exact places of the marked people and "
+            f"move with the same timing, body pose, gestures, head motion, gaze, speech and facial expressions; each one follows its "
+            f"own marked person through position changes, occlusion and cuts. Remove the temporary color markers completely. "
+            f"Keep the framing of the guide: do not widen the shot or add people who are not in the guide; no inset, no small "
+            f"full-body figure, no picture-in-picture. {TRACK_IDENTITY} Preserve the background, lighting, camera and the visual "
+            f"style of the guide (game, animation or live action); render the replacements in that same style. Prevent identity "
+            f"drift, clothing changes, texture crawling and flicker.")
 
 # Motion Transfer v1.0: the manual prompt of the author's native workflow (minimax_h3_motion_transfer_workflow_native_nodes_v1.0.json),
 # to edit: say which picture is who, or what (an outfit, an object, a place, a style).
@@ -222,23 +264,27 @@ def prompt_of(mode, details, marked=False):
     return template_of(mode, marked).replace(GAP, " ".join(details.split()).strip().strip('"').rstrip("."))
 
 
-def mark_nodes(graph, mark):
-    """SAM 3.1 and the node that paints the marked person on the guide's frames."""
+def mark_nodes(graph, people, opacity):
+    """SAM 3.1 and the node that paints the marked people on the guide's frames. people: [{x, y, color}]."""
     name = sam()
     if not name:
         raise h3_graph.Missing("Picking the person needs SAM 3.1 (sam3.1_multiplex_fp16.safetensors) in models/checkpoints "
                                "(gear menu › Models › Swap).")
     graph[SAM_LOADER] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": name}}
-    graph[MARK_NODE] = {"class_type": "MMVisionMarkPerson", "inputs": {
-        "images": [GUIDE, 0], "sam_model": [SAM_LOADER, 0], "x": float(mark["x"]), "y": float(mark["y"]),
-        "color": MARK_COLOR, "opacity": float(mark.get("opacity", 1.0))}}
+    graph[MARK_NODE] = {"class_type": "MMVisionMarkPeople", "inputs": {
+        "images": [GUIDE, 0], "sam_model": [SAM_LOADER, 0], "opacity": float(opacity),
+        "people": json.dumps([{"x": float(p["x"]), "y": float(p["y"]), "color": p["color"]} for p in people])}}
     return [MARK_NODE, 0]
 
 
-def mark_graph(source, mark, megapixels, prefix):
-    """The guide with the person marked, as a video to check before swapping."""
+def color_hex(name):
+    return dict(COLORS)[name]
+
+
+def mark_graph(source, people, opacity, megapixels, prefix):
+    """The guide with the people marked, as a video to check first. people: [{x, y, color}] (colour as hex)."""
     graph = {GUIDE: {"class_type": "MMVisionLoadGuide", "inputs": {"file": source, "megapixels": float(megapixels), "max_frames": MAX_FRAMES}}}
-    marked = mark_nodes(graph, mark)
+    marked = mark_nodes(graph, people, opacity)
     graph["18"] = {"class_type": "CreateVideo", "inputs": {"images": marked, "fps": 24.0}}
     graph["19"] = {"class_type": "SaveVideo", "inputs": {"video": ["18", 0], "filename_prefix": prefix, "format": "auto", "codec": "auto"}}
     return graph
@@ -268,7 +314,8 @@ def motion_prompt(prompt):
     return prompt if prompt.startswith(MOTION_TRIGGER) else MOTION_TRIGGER + "\n" + prompt
 
 
-def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE, method="guide"):
+def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE, method="guide",
+          people=None):
     """The graph that swaps the picture's character (or head) into a video.
 
     clip: the new clip: the picture as <Picture 1>, the seed, and the prompt (made here from the template).
@@ -277,15 +324,18 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     model with the DMD turbo LoRA (as is any other non-turbo family), and a turbo family runs on its own. mark: {x, y, opacity}, a point on the first frame: only the person
     there is replaced (Character only), painted red on the guide and named in the prompt.
     Motion: clip carries up to 9 pictures, the person's own prompt and LoRAs (details is not used); method "tara" runs
-    Motion Transfer TARA v1.0 the author's way, "guide" Motion Transfer v1.0.
+    Motion Transfer TARA v1.0 the author's way, "guide" Motion Transfer v1.0. people: Motion's picked people,
+    [{x, y, picture, color}]: each painted in its colour on the guide; with an empty prompt, the prompt is written for
+    them, each picture described by MOSS-Image's text model (or called "the character" without it).
     """
     files = h3_graph.available() if files is None else files
     spec = MODES[mode]
     motion = mode == "motion"
     tara = motion and method == "tara"
+    auto = bool(motion and people and not clip["prompt"].replace(MOTION_TRIGGER, "", 1).strip())
     if tara and tara_why(files):
         raise h3_graph.Missing(tara_why(files))
-    text = describer(files) if not motion and not details.strip() else None
+    text = describer(files) if (auto or not motion) and not details.strip() else None
     if not motion and not details.strip() and not text:
         raise h3_graph.Missing("Describe the %s in words: describing the picture needs MOSS-Image's text encoder "
                                "(qwen3.5_9b_w4a8_gptq.safetensors)." % ("character" if mode == "character" else "face"))
@@ -296,7 +346,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
                 scheduler=(profile.get("scheduler") or spec["scheduler"]) if own else spec["scheduler"],
                 loras=([] if own else [{"name": TURBO, "strength": 1.0}]) + [{"name": TARA_LORA if tara else spec["lora"], "strength": 1.0}]
                 + (list(clip.get("loras") or []) if motion else []),
-                prompt=motion_prompt(clip["prompt"]) if motion
+                prompt=people_prompt(people) if auto else motion_prompt(clip["prompt"]) if motion
                 else prompt_of(mode, details, bool(mark)) if details.strip() else template_of(mode, bool(mark)))
     graph = h3_graph.build_graph(clip, images, files=files, name=name)
     picture = "50"
@@ -329,7 +379,26 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
             "image": reference, "upscale_method": "lanczos", "megapixels": REF_MEGAPIXELS, "resolution_steps": 32}}
         cond["ref_images.ref_image_0"] = [SMALL, 0]
 
-    if text:
+    if auto:
+        # The prompt for the picked people: each one's picture described by the text model, put in its gap.
+        template, written = clip["prompt"], None
+        for n, number in enumerate(dict.fromkeys(p["picture"] for p in people)):
+            gap = "{details%d}" % number
+            if not text:
+                template = template.replace(gap, "the character")
+                continue
+            if DESCRIBER not in graph:
+                graph[DESCRIBER] = {"class_type": "CLIPLoader", "inputs": {"clip_name": text, "type": "minimax", "device": "default"}}
+            graph[str(DESCRIBE_NODE + n)] = {"class_type": "TextGenerateV2", "inputs": {
+                "clip": [DESCRIBER, 0], "prompt": CHARACTER_INSTRUCTION, "images.image1": ["%d" % (49 + number), 0],
+                "max_length": 1024, "sampling_mode": "off", "thinking": False, "use_default_template": True, "mtp": "off"}}
+            graph[str(FILL_NODE + n)] = {"class_type": "StringReplace", "inputs": {
+                "string": written or template, "find": gap, "replace": [str(DESCRIBE_NODE + n), 0]}}
+            written = [str(FILL_NODE + n), 0]
+        if written:
+            graph[ph3_bridge.UPSAMPLED_NODE] = {"class_type": "PreviewAny", "inputs": {"source": written}}
+        cond["prompt"] = written or template
+    elif text:
         graph[DESCRIBER] = {"class_type": "CLIPLoader", "inputs": {"clip_name": text, "type": "minimax", "device": "default"}}
         graph[DESCRIBE] = {"class_type": "TextGenerateV2", "inputs": {
             "clip": [DESCRIBER, 0], "prompt": spec["instruction"], "images.image1": [picture, 0], "max_length": 1024,
@@ -338,16 +407,20 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
         graph[ph3_bridge.UPSAMPLED_NODE] = {"class_type": "PreviewAny", "inputs": {"source": [FILL, 0]}}
         cond["prompt"] = [FILL, 0]
 
+    if people:
+        marked = mark_nodes(graph, [dict(p, color=color_hex(p["color"])) for p in people], PEOPLE_OPACITY)
+    else:
+        marked = mark_nodes(graph, [{"x": mark["x"], "y": mark["y"], "color": MARK_COLOR}], mark.get("opacity", 1.0)) if mark else [GUIDE, 0]
     if tara:
         # The video as <Video 1>, aligned frame by frame by the patch, which the live preview and guider then use.
-        cond["ref_videos.ref_video_0"] = [GUIDE, 0]
+        cond["ref_videos.ref_video_0"] = marked
         graph[TEMPORAL] = {"class_type": TARA_NODE, "inputs": {
             "model": ["5", 0], "motion_video_index": 1, "strength": 2.0, "window_seconds": 0.2, "falloff_seconds": 0.25, "max_penalty": 6.0}}
         graph["9"]["inputs"]["model"] = [TEMPORAL, 0]
         graph.pop("17", None)
         graph["18"]["inputs"]["audio"] = [GUIDE, 1]
         return graph
-    guide = mark_nodes(graph, mark) if mark else [GUIDE, 0]
+    guide = marked
     graph[ADD_GUIDE] = {"class_type": "MiniMaxH3AddGuide", "inputs": {
         "positive": ["10", 0], "latent": ["10", 1], "vae": ["3", 0], "audio_vae": ["4", 0], "image": guide,
         "audio": [GUIDE, 1], "frame_idx": 0}}

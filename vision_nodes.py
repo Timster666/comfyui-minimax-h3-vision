@@ -6,7 +6,7 @@ and the H3 editor can be installed side by side. Each video graph uses them like
 - MMVisionLoadStill: an @image, read from the output folder, where the app keeps uploads.
 - MMVisionLoadVideo: a clip, read from the output folder, for Refine faces.
 - MMVisionLoadGuide: a clip as a swap's guide: 24 fps, H3 size, 17k+5 frames, with its sound.
-- MMVisionMarkPerson: one person of a guide painted in a colour (SAM 3), so a swap replaces only them.
+- MMVisionMarkPeople: people of a guide, each painted in a colour (SAM 3), so a swap or motion knows who becomes whom.
 - MMVisionHyperFlowLoader and MMVisionHyperFlowSigmas: HyperFlow H3 Flash, its model and its 4, 6 or 8-step schedule.
 - MMVisionLora: an H3 LoRA, renumbered for HyperFlow and added at run time on INT8 weights.
 - MMVisionLivePreview: the moving preview of the clip at every step.
@@ -113,55 +113,58 @@ class LoadGuide(io.ComfyNode):
         return io.NodeOutput(frames, audio, width, height, length)
 
 
-class MarkPerson(io.ComfyNode):
-    """One person in a guide video painted in a colour, so a swap knows whom to replace: SAM 3 finds the person at a
-    point on the first frame and follows them through the clip. The point-to-person logic is Henge's
-    (github.com/alisson-anjos/Henge, MIT, point_tracking.py): of the masks at the point, the largest that contains it."""
+class MarkPeople(io.ComfyNode):
+    """People in a guide video, each painted in their own colour, so a swap or a motion transfer knows who becomes
+    whom: SAM 3 finds each person at a point on the first frame and follows them through the clip. The
+    point-to-person logic is Henge's (github.com/alisson-anjos/Henge, MIT, point_tracking.py): of the masks at the
+    point, the largest that contains it. Everyone is found on the unpainted frame and followed on their own."""
 
     @classmethod
     def define_schema(cls):
         return io.Schema(
-            node_id="MMVisionMarkPerson",
-            display_name="Vision Mark Person",
+            node_id="MMVisionMarkPeople",
+            display_name="Vision Mark People",
             category=CATEGORY,
-            description="Paint the person at a point of the first frame, through the whole clip, with SAM 3.",
+            description="Paint the people at points of the first frame, each in a colour, through the whole clip, with SAM 3.",
             inputs=[io.Image.Input("images"), io.Model.Input("sam_model"),
-                    io.Float.Input("x", default=0.5, min=0.0, max=1.0, step=0.001, tooltip="Across the first frame, 0 to 1."),
-                    io.Float.Input("y", default=0.5, min=0.0, max=1.0, step=0.001, tooltip="Down the first frame, 0 to 1."),
-                    io.String.Input("color", default="#DC463C"),
+                    io.String.Input("people", default='[{"x": 0.5, "y": 0.5, "color": "#DC463C"}]',
+                                    tooltip='JSON: [{"x", "y", "color"}], x and y from 0 to 1 across and down the first frame.'),
                     io.Float.Input("opacity", default=1.0, min=0.1, max=1.0, step=0.05)],
             outputs=[io.Image.Output(display_name="images"), io.Mask.Output(display_name="mask")],
         )
 
     @classmethod
-    def execute(cls, images, sam_model, x, y, color, opacity) -> io.NodeOutput:
+    def execute(cls, images, sam_model, people, opacity) -> io.NodeOutput:
         from comfy.ldm.sam3.tracker import unpack_masks
         from comfy_extras.nodes_sam3 import SAM3_Detect, SAM3_VideoTrack
         n, h, w = images.shape[:3]
-        px, py = min(w - 1, max(0, round(x * w))), min(h - 1, max(0, round(y * h)))
-        # More decoder refinement drops the point prompt (Henge's note), so one pass.
-        found = SAM3_Detect.execute(model=sam_model, image=images[:1], positive_coords=json.dumps([{"x": px, "y": py}]),
-                                    refine_iterations=1, individual_masks=True)[0].cpu() > 0.5
-        if tuple(found.shape[-2:]) != (h, w):
-            found = torch.nn.functional.interpolate(found.float()[:, None], size=(h, w), mode="nearest")[:, 0] > 0.5
-        candidates = [m for m in found if bool(m[py, px])]
-        if not candidates:
-            raise ValueError("SAM found nobody at that point of the first frame: click inside the person.")
-        seed = max(candidates, key=lambda m: int(m.sum())).float()[None]
-        mask = torch.zeros(n, h, w, dtype=torch.bool)
-        mask[0] = seed[0].bool()
-        if n > 1:
-            packed = SAM3_VideoTrack.execute(images=images, model=sam_model, initial_mask=seed, max_objects=1)[0].get("packed_masks")
-            if packed is not None:
-                followed = unpack_masks(packed).cpu().float()
-                if tuple(followed.shape[-2:]) != (h, w):
-                    followed = torch.nn.functional.interpolate(followed, size=(h, w), mode="nearest")
-                mask |= followed[:, 0] > 0.5
+        marked, union = images.clone(), torch.zeros(n, h, w, dtype=torch.bool)
+        for number, person in enumerate(json.loads(people), 1):
+            px = min(w - 1, max(0, round(float(person["x"]) * w)))
+            py = min(h - 1, max(0, round(float(person["y"]) * h)))
+            # More decoder refinement drops the point prompt (Henge's note), so one pass.
+            found = SAM3_Detect.execute(model=sam_model, image=images[:1], positive_coords=json.dumps([{"x": px, "y": py}]),
+                                        refine_iterations=1, individual_masks=True)[0].cpu() > 0.5
+            if tuple(found.shape[-2:]) != (h, w):
+                found = torch.nn.functional.interpolate(found.float()[:, None], size=(h, w), mode="nearest")[:, 0] > 0.5
+            candidates = [m for m in found if bool(m[py, px])]
+            if not candidates:
+                raise ValueError("SAM found nobody at person %d's point on the first frame: click inside the person." % number)
+            seed = max(candidates, key=lambda m: int(m.sum())).float()[None]
+            mask = torch.zeros(n, h, w, dtype=torch.bool)
+            if n > 1:
+                packed = SAM3_VideoTrack.execute(images=images, model=sam_model, initial_mask=seed, max_objects=1)[0].get("packed_masks")
+                if packed is not None:
+                    followed = unpack_masks(packed).cpu().float()
+                    if tuple(followed.shape[-2:]) != (h, w):
+                        followed = torch.nn.functional.interpolate(followed, size=(h, w), mode="nearest")
+                    mask |= followed[:, 0] > 0.5
             mask[0] = seed[0].bool()
-        rgb = torch.tensor([int(color.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)], dtype=images.dtype)
-        marked = images.clone()
-        marked[mask] = rgb if opacity >= 1 else images[mask] * (1 - opacity) + rgb * opacity
-        return io.NodeOutput(marked, mask.float())
+            color = str(person["color"]).lstrip("#")
+            rgb = torch.tensor([int(color[i:i + 2], 16) / 255 for i in (0, 2, 4)], dtype=images.dtype)
+            marked[mask] = rgb if opacity >= 1 else images[mask] * (1 - opacity) + rgb * opacity
+            union |= mask
+        return io.NodeOutput(marked, union.float())
 
 
 class Lora(io.ComfyNode):
@@ -389,10 +392,10 @@ class PasteCrop(io.ComfyNode):
         return io.NodeOutput(out)
 
 
-NODE_CLASS_MAPPINGS = {"MMVisionLoadStill": LoadStill, "MMVisionLoadVideo": LoadVideo, "MMVisionLoadGuide": LoadGuide, "MMVisionMarkPerson": MarkPerson, "MMVisionLora": Lora, "MMVisionHyperFlowLoader": HyperFlowLoader,
+NODE_CLASS_MAPPINGS = {"MMVisionLoadStill": LoadStill, "MMVisionLoadVideo": LoadVideo, "MMVisionLoadGuide": LoadGuide, "MMVisionMarkPeople": MarkPeople, "MMVisionLora": Lora, "MMVisionHyperFlowLoader": HyperFlowLoader,
                        "MMVisionHyperFlowSigmas": HyperFlowSigmas, "MMVisionLivePreview": LivePreview,
                        "MMVisionLoadMask": LoadMask, "MMVisionCropToMask": CropToMask, "MMVisionPasteCrop": PasteCrop}
-NODE_DISPLAY_NAME_MAPPINGS = {"MMVisionLoadStill": "Vision Load Still", "MMVisionLoadVideo": "Vision Load Video", "MMVisionLoadGuide": "Vision Load Guide Video", "MMVisionMarkPerson": "Vision Mark Person", "MMVisionLora": "Vision H3 LoRA",
+NODE_DISPLAY_NAME_MAPPINGS = {"MMVisionLoadStill": "Vision Load Still", "MMVisionLoadVideo": "Vision Load Video", "MMVisionLoadGuide": "Vision Load Guide Video", "MMVisionMarkPeople": "Vision Mark People", "MMVisionLora": "Vision H3 LoRA",
                               "MMVisionHyperFlowLoader": "Vision HyperFlow Loader",
                               "MMVisionHyperFlowSigmas": "Vision HyperFlow Sigmas", "MMVisionLivePreview": "Vision Live Preview",
                               "MMVisionLoadMask": "Vision Load Mask", "MMVisionCropToMask": "Vision Crop To Mask",
