@@ -69,6 +69,7 @@ _exports = {}   # export id -> {"cancel": bool}
 DEFAULT_UI = {
     "motion": None,   # the Video tab's Motion from: the id of the video that gives the motion, or None
     "motionMethod": "tara",   # and how: "tara" (Motion Transfer TARA v1.0) or "guide" (Motion Transfer v1.0)
+    "motionPeople": [],       # its picked people: [{x, y, picture}] on the video's first frame
     "settings": {"model": "HyperFlow H3 Flash", "steps": 6, "res": 0.6, "aspect": "16:9", "len": 5,
                  "seedMode": "random", "seed": 48213, "loras": [], "realism": {"on": True, "strength": 1.2}},
     "imageSettings": {"model": "MOSS-Image SFT (INT8)", "steps": 50, "cfg": 3.0, "res": 1.0, "aspect": "1:1",
@@ -677,7 +678,8 @@ async def generate(request):
         return await generate_pruna(prompt, s, body)
     if body.get("kind") == "klein" and body.get("mode") == "swap":
         return await generate_klein(prompt, s, body.get("slots") or [], body.get("negative"), swap=True, mask=body.get("mask"))
-    if not prompt:
+    picked = body.get("kind") == "video" and body.get("motion") and body.get("motionPeople")
+    if not prompt and not picked:
         raise web.HTTPBadRequest(text="Write a prompt first.")
     if body.get("kind") == "image":
         return await generate_image(prompt, s, body.get("negative"), body.get("edit"))
@@ -763,8 +765,13 @@ async def generate(request):
             if frames < (swap.TARA_MIN_FRAMES if method == "tara" else 5):
                 raise web.HTTPBadRequest(text="That video is too short: TARA needs at least 2 seconds." if method == "tara"
                                          else "That video is too short for H3.")
+            people = clean_people(body.get("motionPeople"), len(pictures))
+            if people and not swap.sam():
+                raise web.HTTPBadRequest(text="Picking the people needs SAM 3.1 (gear menu › Models › Swap and Motion).")
             clip.update({"width": w, "height": h, "len": round(frames / 24, 2), "aspect": motion.get("aspect") or aspect,
-                         "prompt": swap.motion_prompt(prompt), "motion": {"from": motion["id"], "method": method}})
+                         "prompt": swap.motion_prompt(prompt) if prompt else "",
+                         "motion": {"from": motion["id"], "method": method, "people": people or None,
+                                    "described": bool(people and not prompt and swap.describer())}})
             clip.pop("refmods", None)
             clip.pop("realism", None)
 
@@ -772,8 +779,11 @@ async def generate(request):
         if motion:
             graph = swap.build(clip, images, "%s/%s" % (motion.get("subfolder") or ROOT + "/clips", motion["file"]), "motion",
                                megapixels=res, name=clip_info.file_stem(clip) + "_motion", model=model["id"],
-                               method=clip["motion"]["method"])
+                               method=clip["motion"]["method"], people=clip["motion"]["people"])
             clip["steps"] = graph["12"]["inputs"]["steps"]
+            if not clip["prompt"]:
+                clip["prompt"] = graph["10"]["inputs"]["prompt"] if isinstance(graph["10"]["inputs"]["prompt"], str) \
+                    else swap.people_prompt(clip["motion"]["people"])
         else:
             graph = h3_graph.build_graph(clip, images, name=clip_info.file_stem(clip))
         clip["prompt_id"] = await queue(graph, clip_info.extra_data(clip), body.get("client_id"))
@@ -1388,8 +1398,8 @@ async def watch_real():
                         extra = {}
                         if clip.get("family") == "ph3" and clip.get("enhance"):
                             extra["upsampled"] = ph3_bridge.upsampled_text(entry)
-                        # A video swap's swap is a dict; a Klein face swap's is True.
-                        if isinstance(clip.get("swap"), dict) and clip["swap"].get("described"):
+                        # A video swap's swap is a dict; a Klein face swap's is True. Motion's picked people too.
+                        if any(isinstance(clip.get(k), dict) and clip[k].get("described") for k in ("swap", "motion")):
                             extra["prompt"] = swap.written_prompt(entry) or clip["prompt"]
                         await set_clip(clip["id"], status="done", step=clip["steps"], file=file["filename"],
                                        subfolder=file.get("subfolder") or ROOT + ("/stills" if clip.get("kind") == "image" else "/clips"), **extra)
@@ -1537,6 +1547,28 @@ async def swaps(request):
     return web.json_response({"clip": clip})
 
 
+def clean_people(people, count):
+    """Motion's picked people: up to 4 points on the video's first frame, each becoming one of the prompt bar's
+    pictures (1 to count), with Henge's colours in order. None for no picks."""
+    if not people:
+        return None
+    if not isinstance(people, list) or len(people) > len(swap.COLORS):
+        raise web.HTTPBadRequest(text="Pick up to %d people." % len(swap.COLORS))
+    out = []
+    for n, person in enumerate(people):
+        try:
+            x, y, picture = float(person["x"]), float(person["y"]), int(person["picture"])
+        except (KeyError, TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Person %d needs a point on the first frame and a picture." % (n + 1))
+        if not (0 <= x <= 1 and 0 <= y <= 1):
+            raise web.HTTPBadRequest(text="Person %d's point is off the frame." % (n + 1))
+        if not 1 <= picture <= count:
+            raise web.HTTPBadRequest(text="Person %d becomes Picture %d, but there %s in the prompt bar." % (
+                n + 1, picture, "is 1 picture" if count == 1 else "are %d pictures" % count))
+        out.append({"x": round(x, 4), "y": round(y, 4), "picture": picture, "color": swap.COLORS[n][0]})
+    return out
+
+
 def clean_mark(mark):
     """A point on a video's first frame (0 to 1 across and down), and how solid its colour is; None for no mark."""
     if not isinstance(mark, dict):
@@ -1565,16 +1597,21 @@ async def swap_mark(request):
             return web.json_response({"state": "done", "file": file["filename"], "subfolder": file.get("subfolder") or ""})
         return web.json_response({"state": "failed", "error": comfy_link.failure(entry)})
     body = await request.json()
-    mark = clean_mark(body.get("mark"))
-    if not mark:
-        raise web.HTTPBadRequest(text="Click the person on the first frame.")
+    if body.get("people"):
+        people = [dict(p, color=swap.color_hex(p["color"])) for p in clean_people(body["people"], 9)]
+        opacity = swap.PEOPLE_OPACITY
+    else:
+        mark = clean_mark(body.get("mark"))
+        if not mark:
+            raise web.HTTPBadRequest(text="Click the person on the first frame.")
+        people, opacity = [{"x": mark["x"], "y": mark["y"], "color": swap.MARK_COLOR}], mark["opacity"]
     res = float(body.get("res") or 0.6)
     async with _lock:
         source = next((c for c in read_project()["clips"] if c["id"] == request.match_info["id"]), None)
     if not source or not source.get("file"):
         raise web.HTTPBadRequest(text="That video isn't there any more.")
     try:
-        graph = swap.mark_graph("%s/%s" % (source.get("subfolder") or ROOT + "/clips", source["file"]), mark, res,
+        graph = swap.mark_graph("%s/%s" % (source.get("subfolder") or ROOT + "/clips", source["file"]), people, opacity, res,
                                 "%s/marks/%s" % (ROOT, source["id"]))
         pid = await comfy_link.queue_prompt(graph, {}, None)
     except (h3_graph.Missing, comfy_link.Refused) as error:

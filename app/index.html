@@ -632,6 +632,12 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
 .sw-check { display: flex; flex-direction: column; gap: 6px; }
 .sw-check video { border-radius: 10px; }
 .hint.warn { color: var(--danger, #e5484d); }
+.pp-dot { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 2px solid #fff; color: #fff; font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px rgba(0,0,0,.4); pointer-events: none; }
+.pp-list { display: flex; flex-direction: column; gap: 6px; }
+.pp-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.pp-row select { font: inherit; background: transparent; color: inherit; border: 1px solid var(--line, #333); border-radius: 6px; padding: 2px 6px; }
+.pp-swatch { width: 14px; height: 14px; border-radius: 50%; }
+.pp-x { position: static; margin-left: auto; }
 .motion-add.on { border-color: var(--accent); color: var(--accent); }
 .motion-chip { position: relative; display: flex; align-items: center; gap: 8px; padding: 4px 28px 4px 4px; border: 1px solid var(--accent); border-radius: 12px; min-width: 0; }
 .motion-chip video { width: 72px; height: 72px; object-fit: cover; border-radius: 9px; background: #000; }
@@ -975,6 +981,23 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
     </div>
     <div class="lm-foot"><span class="lm-hint">Made in ComfyUI's queue with H3's video VAE, then listed under RefMods in the Video settings.</span>
       <button class="btn" data-act="rmClose">Cancel</button><button class="btn primary" id="rmGo" data-act="rmGo">Make RefMod</button></div>
+  </div>
+</div>
+<div class="lm-scrim" id="peopleModal" hidden>
+  <div class="lm rm" role="dialog" aria-modal="true" aria-labelledby="ppTitle">
+    <div class="lm-head">
+      <div><h2 id="ppTitle">Pick the people</h2><div class="lm-count">Click each person in the video and choose which picture they become. They're painted in their colour through the clip, so the motion knows who becomes whom.</div></div>
+      <button class="lm-close" data-act="peopleDone" aria-label="Close">×</button>
+    </div>
+    <div class="rm-body">
+      <div class="sw-frame" id="ppFrameBox"><video id="ppFrame" muted playsinline preload="auto"></video><div id="ppDots"></div></div>
+      <span class="hint" id="ppHint"></span>
+      <div class="pp-list" id="ppList"></div>
+      <div class="sw-pick-row"><button class="btn" id="ppCheck" data-act="peopleCheck">Check the marks</button><button class="link" data-act="peopleClear">Remove all</button></div>
+      <div class="sw-check" id="ppCheckOut"></div>
+      <span class="hint">Leave the prompt empty and Vision writes the author's prompt for these people, with MOSS-Image's text model describing each picture. Your own prompt is used instead if you write one.</span>
+    </div>
+    <div class="lm-foot"><span class="lm-hint">TARA is the author's choice for marked people.</span><button class="btn primary" data-act="peopleDone">Done</button></div>
   </div>
 </div>
 <div class="lm-scrim" id="swapModal" hidden>
