@@ -93,6 +93,21 @@ PROFILES = {
         "steps": 8,
         "sampler": "euler",
     },
+    # 10Eros Max v1.0: beta5, beta7 and Sulphur3 combined, an fl2va hybrid for pictures or first/last frames alike.
+    # Its card: 8 to 12 steps with LCM/simple (res_multistep/simple at 6 to 8, Euler/simple at 4 to 8).
+    "eros_v1": {
+        "title": "10Eros Max v1.0",
+        "unet": ["10Eros_Max_8stepTurbo_v1.0_hybrid-int8_HQ.safetensors", "10Eros_Max_8stepTurbo_v1.0_hybrid-int8*"],
+        "steps": 8,
+        "sampler": "lcm",
+    },
+    # The same, unquantized (40.2 GB): for a GPU with the memory for it, such as an RTX PRO 6000.
+    "eros_v1_full": {
+        "title": "10Eros Max v1.0 full",
+        "unet": ["10Eros_Max_8stepTurbo_v1.0_hybrid.safetensors"],
+        "steps": 8,
+        "sampler": "lcm",
+    },
     "prism": {
         "title": "PRISM (Singularity x 10Eros Max)",
         "unet": ["PRISM_DMAD_PDMD_int8.safetensors", "PRISM_DMAD_PDMD*"],
