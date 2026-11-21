@@ -84,7 +84,9 @@ on the video's first frame (up to 4) and choose which picture they become; SAM 3
 paints them see-through in their colour (red, blue, green, yellow), and with the prompt left empty Vision writes the
 author's prompt for them (Henge's one- or several-person recipe with `motion_transfer:`), each picture described by
 MOSS-Image's text model; the people in the video are never described, so their looks don't leak. **Check the marks**
-shows the painted video first. The author recommends TARA for marked people.
+shows the painted video first. A third method, **Character Swap · marked people**, runs the recipe Henge made
+for marked people as it was meant: Character Swap v1.1 with the `body_swap:` prompt, the marks solid, the marked
+video as a traced guide, and each picture cut out onto grey; it keeps the scene and replaces just the picked people.
 
 **Refine faces** (optional, with Carasibana's [ComfyUI-H3-FaceRefine](https://github.com/Carasibana/ComfyUI-H3-FaceRefine),
 the `MiniMaxH3NativeAudioLock` node and the `face_yolov8m.pt` detector in `models/ultralytics/bbox`; on RunPod

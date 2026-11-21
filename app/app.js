@@ -60,7 +60,7 @@ const state = {
   attached: [],              // ids of the images in the prompt bar
   motion: null,              // Motion from: the id of the video that gives a render its motion (Motion Transfer)
   motionMethod: "tara",      // "tara" (Motion Transfer TARA v1.0, several people) or "guide" (Motion Transfer v1.0)
-  motionWhy: { tara: null },  // why a method can't run here (from GET swap)
+  motionWhy: { tara: null, swap: null },  // why a method can't run here (from GET swap)
   motionPeople: [],          // Motion's picked people: [{x, y, picture}], painted in PEOPLE_COLORS' order
   motionMarks: false,        // whether SAM 3.1 is here to mark them
   motionTurbo: {},           // per model id that Motion can use: whether it runs its own way (a turbo build)
@@ -291,7 +291,7 @@ function summary() {
       s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   }
   if (!isImage() && state.motion && motionSource(state.motion))
-    return ["Motion from a video (" + (motionMethodNow() === "tara" ? "TARA" : "v1.0") + ")", modelOf(s.model)?.scheduler === "hyperflow" ? s.model + " (can't do Motion: pick another model)" : s.model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
+    return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? s.model + " (can't do Motion: pick another model)" : s.model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
       n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   return [s.model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
     s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
@@ -661,6 +661,7 @@ function motionChip() {
         <select class="motion-method" data-change="motionMethod" aria-label="How the motion is transferred" title="${esc(motionHint())}">
           <option value="tara" ${motionMethodNow() === "tara" ? "selected" : ""} ${state.motionWhy.tara ? "disabled" : ""}>TARA · several people</option>
           <option value="guide" ${motionMethodNow() === "guide" ? "selected" : ""}>Motion Transfer v1.0</option>
+          <option value="swap" ${motionMethodNow() === "swap" ? "selected" : ""} ${state.motionWhy.swap ? "disabled" : ""}>Character Swap · marked people</option>
         </select>
         <button class="link" data-act="openPeople">${state.motionPeople.length ? state.motionPeople.length + (state.motionPeople.length === 1 ? " person" : " people") + " picked · change" : "Pick the people"}</button>
         ${state.motionPeople.length ? "" : `<button class="link" data-act="motionTemplate">Use the author's prompt</button>`}</span>
@@ -743,16 +744,18 @@ function motionNote(model) {
 }
 
 // TARA when it can run here, else Motion Transfer v1.0.
-const motionMethodNow = () => state.motionMethod === "tara" && !state.motionWhy.tara ? "tara" : "guide";
+const motionMethodNow = () => ["tara", "swap"].includes(state.motionMethod) && !state.motionWhy[state.motionMethod] ? state.motionMethod : "guide";
 function motionHint() {
-  return motionMethodNow() === "tara"
+  return motionMethodNow() === "swap"
+    ? "Character Swap v1.1 on the people you picked: each is replaced by their picture (cut out onto grey), the scene and everyone else stay. Their marks are solid colours. Needs Pick the people."
+    : motionMethodNow() === "tara"
     ? "TARA: the author's LoRA for several people, objects or vehicles. The video is a native reference, kept in step frame by frame (BFS temporal alignment). Needs 2 to 15 s of video."
     : "Motion Transfer v1.0: the video traced as a guide, frame by frame. The author's default for one performer." + (state.motionWhy.tara ? " " + state.motionWhy.tara : "");
 }
 async function loadMotionStatus() {
   try {
     const st = await api("GET", "swap");
-    state.motionWhy = { tara: st.methods?.tara || null };
+    state.motionWhy = { tara: st.methods?.tara || null, swap: st.methods?.swap || null };
     state.motionMarks = !!st.mark;
     state.motionTurbo = Object.fromEntries(st.models.map((m) => [m.id, m.turbo]));
   } catch {}
@@ -4383,7 +4386,7 @@ async function load(first = true) {
       const fromSubjects = (ui.subjects || []).flatMap((x) => x.refs || []);
       state.attached = [...new Set([...(ui.attached || []), ...fromSubjects])].filter((id) => state.refs.some((r) => r.id === id));
       state.motion = ui.motion && motionSource(ui.motion) ? ui.motion : null;
-      state.motionMethod = ui.motionMethod === "guide" ? "guide" : "tara";
+      state.motionMethod = ["guide", "swap"].includes(ui.motionMethod) ? ui.motionMethod : "tara";
       state.motionPeople = state.motion && Array.isArray(ui.motionPeople) ? ui.motionPeople : [];
       state.perRow = ui.perRow || 3;
       state.prompt = state.drafts[state.tab];

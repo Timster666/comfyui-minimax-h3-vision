@@ -33,7 +33,7 @@ GAP = "{details}"
 # Graph nodes added to h3_graph's.
 GUIDE, ADD_GUIDE, DESCRIBER, DESCRIBE, FILL = "60", "61", "62", "63", "64"
 SAM_LOADER, MARK_NODE, TEMPORAL = "71", "72", "73"
-MASK_MODEL, MASK, SIZE, BACKDROP, CUTOUT, SMALL = "65", "66", "67", "68", "69", "70"
+MASK_MODEL = "65"
 
 CHARACTER_INSTRUCTION = (
     "Analyze the character in this reference image and describe the character's complete visible appearance from head to toe "
@@ -129,25 +129,28 @@ def marked_sentence(color):
 MARKED = marked_sentence(MARK_NAME)
 
 
-def people_prompt(people):
+def people_prompt(people, trigger=None, solid=False):
     """The prompt for Motion's picked people, with a {detailsN} gap for each one's picture N: Henge's one-person
     template with his marked sentence, or his several-person recipe (edit_modes.multi_swap_prompt, 2D tints, no
-    labels), with motion_transfer: as the trigger. Nothing describes the people in the video: their looks would leak.
-    people: [{"picture": N, "color": name}] in Subject order."""
+    labels), with the trigger given (motion_transfer:, or body_swap: for Character Swap, which the recipe was made
+    for). Solid marks are called colour marks, see-through ones tints. Nothing describes the people in the video:
+    their looks would leak. people: [{"picture": N, "color": name}] in Subject order."""
+    trigger = trigger or MOTION_TRIGGER
+    mark, marked = ("color", "colored") if solid else ("tint", "tinted")
     if len(people) == 1:
         one = people[0]
-        return (CHARACTER_TEMPLATE.replace("body_swap:", MOTION_TRIGGER, 1).replace("<Picture 1>", "<Picture %d>" % one["picture"])
+        return (CHARACTER_TEMPLATE.replace(SWAP_TRIGGER, trigger, 1).replace("<Picture 1>", "<Picture %d>" % one["picture"])
                 .replace(GAP, "{details%d}" % one["picture"]) + marked_sentence(one["color"]))
     defs, swaps, names = [], [], []
     for i, person in enumerate(people, 1):
         picture = "<Picture %d>" % person["picture"]
         defs.append("<Subject %d> is the character shown in %s: {details%d}. Their identity, face, hair, body shape, proportions "
                     "and clothing define the %s-marked replacement." % (i, picture, person["picture"], person["color"]))
-        swaps.append("the %s-tinted person with <Subject %d>" % (person["color"], i))
+        swaps.append("the %s-%s person with <Subject %d>" % (person["color"], marked, i))
         names.append("<Subject %d>" % i)
     colors = " and ".join(p["color"] for p in people)
     replace = "Replace " + ", ".join(swaps[:-1]) + " and " + swaps[-1]
-    return (f"{MOTION_TRIGGER} subject_definitions: {' '.join(defs)} In the guide video, the translucent {colors} tints are "
+    return (f"{trigger} subject_definitions: {' '.join(defs)} In the guide video, the {'' if solid else 'translucent '}{colors} {mark}s are "
             f"temporary editing markers, not character appearance. {replace}. The guide video provides the scene, framing and the "
             f"complete performance: body pose, gestures, head motion, gaze, speech and facial expressions.  "
             f"summary: [video generation + references] {replace}, preserving the guide's camera, framing, timing and motion exactly.  "
@@ -181,8 +184,8 @@ MOTION_TRIGGER = "motion_transfer:"
 TARA_LORA = "minimax_h3_motion_transfer_tara_v1.0_ref2va.safetensors"
 TARA_NODE = "BFSMiniMaxH3NativeTemporal"
 TARA_MIN_FRAMES = 56   # the first 17k+5 count of at least 2 s at 24 fps
-METHODS = {"tara": "TARA · several people", "guide": "Motion Transfer v1.0"}
-MOTION_REF_MEGAPIXELS = 1.0   # the workflow's: each picture capped at 1 MP, sent at H3's largest reference size
+METHODS = {"tara": "TARA · several people", "guide": "Motion Transfer v1.0", "swap": "Character Swap · marked people"}
+SWAP_TRIGGER = "body_swap:"
 
 MODES = {
     "character": {"name": "Character Swap v1.1", "lora": "minimax_h3_character_swap_v1.1_ref2va_fro.safetensors",
@@ -252,7 +255,7 @@ def status(files=None):
     for key, mode in MODES.items():
         lack = missing + [f for f in (TURBO, mode["lora"]) if not h3_graph.pick_file([f], files)]
         modes[key] = ("%s needs %s (gear menu › Models › Swap)." % (mode["name"], h3_graph.and_list(lack))) if lack else None
-    return {"modes": modes, "methods": {"tara": tara_why(files), "guide": None}, "motionTemplate": MOTION_TEMPLATE, "describe": bool(describer(files)), "megapixels": MEGAPIXELS, "maxSeconds": MAX_FRAMES // 24,
+    return {"modes": modes, "methods": {"tara": tara_why(files), "guide": None, "swap": modes["character"]}, "motionTemplate": MOTION_TEMPLATE, "describe": bool(describer(files)), "megapixels": MEGAPIXELS, "maxSeconds": MAX_FRAMES // 24,
             "background": bool(birefnet()), "mark": bool(sam())}
 
 
@@ -308,6 +311,12 @@ def guide_shape(path, megapixels):
     return max(32, round(src_w * scale / 32) * 32), max(32, round(src_h * scale / 32) * 32), length
 
 
+def swap_prompt(prompt):
+    """A person's own prompt for Character Swap on marked people, with its trigger in front."""
+    prompt = prompt.strip()
+    return prompt if prompt.startswith(SWAP_TRIGGER) else SWAP_TRIGGER + " " + prompt
+
+
 def motion_prompt(prompt):
     """A Motion Transfer prompt as sent: the person's own, with the trigger it was trained on in front."""
     prompt = prompt.strip()
@@ -332,6 +341,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     spec = MODES[mode]
     motion = mode == "motion"
     tara = motion and method == "tara"
+    swapping = motion and method == "swap"   # Character Swap v1.1 on the marked people, the recipe Henge made for it
     auto = bool(motion and people and not clip["prompt"].replace(MOTION_TRIGGER, "", 1).strip())
     if tara and tara_why(files):
         raise h3_graph.Missing(tara_why(files))
@@ -344,9 +354,11 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     clip = dict(clip, profile=model, refmods=None, realism=None,
                 steps=profile["steps"] if own else STEPS, sampler=profile["sampler"] if own else SAMPLER,
                 scheduler=(profile.get("scheduler") or spec["scheduler"]) if own else spec["scheduler"],
-                loras=([] if own else [{"name": TURBO, "strength": 1.0}]) + [{"name": TARA_LORA if tara else spec["lora"], "strength": 1.0}]
+                loras=([] if own else [{"name": TURBO, "strength": 1.0}])
+                + [{"name": TARA_LORA if tara else MODES["character"]["lora"] if swapping else spec["lora"], "strength": 1.0}]
                 + (list(clip.get("loras") or []) if motion else []),
-                prompt=people_prompt(people) if auto else motion_prompt(clip["prompt"]) if motion
+                prompt=people_prompt(people, SWAP_TRIGGER, solid=True) if auto and swapping else people_prompt(people) if auto
+                else swap_prompt(clip["prompt"]) if swapping else motion_prompt(clip["prompt"]) if motion
                 else prompt_of(mode, details, bool(mark)) if details.strip() else template_of(mode, bool(mark)))
     graph = h3_graph.build_graph(clip, images, files=files, name=name)
     picture = "50"
@@ -354,30 +366,25 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     cond = graph["10"]["inputs"]
     cond.update({"width": [GUIDE, 2], "height": [GUIDE, 3], "length": [GUIDE, 4]})
 
-    if motion:
-        # Every picture as the author's workflow sends them: up to 1 MP each, at H3's largest reference size.
-        cond["ref_image_size"] = "max"
-        for key in [k for k in cond if k.startswith("ref_images.")]:
-            small = "8%s" % key.rsplit("_", 1)[1]
-            graph[small] = {"class_type": "ImageScaleToTotalPixels", "inputs": {
-                "image": cond[key], "upscale_method": "lanczos", "megapixels": MOTION_REF_MEGAPIXELS, "resolution_steps": 32}}
-            cond[key] = [small, 0]
-    else:
-        cond["ref_image_size"] = "max"
-        reference = [picture, 0]
-        remover = birefnet()
+    cond["ref_image_size"] = "max"
+    remover = birefnet() if not motion or swapping else None
+    for n, key in enumerate(sorted(k for k in cond if k.startswith("ref_images."))):
+        # Each picture as Henge sends them: up to 1 MP, at H3's largest reference size; for a swap, cut out onto grey
+        # first (the Character Swap workflow's reference), so nothing of the picture's background comes along.
+        reference = cond[key]
         if remover:
-            # The workflow's reference: the character cut out onto grey, so nothing of the picture's background comes along.
+            base = 300 + 10 * n
             graph[MASK_MODEL] = {"class_type": "LoadBackgroundRemovalModel", "inputs": {"bg_removal_name": remover}}
-            graph[MASK] = {"class_type": "RemoveBackground", "inputs": {"bg_removal_model": [MASK_MODEL, 0], "image": reference}}
-            graph[SIZE] = {"class_type": "GetImageSize", "inputs": {"image": reference}}
-            graph[BACKDROP] = {"class_type": "EmptyImage", "inputs": {"width": [SIZE, 0], "height": [SIZE, 1], "batch_size": 1, "color": GREY}}
-            graph[CUTOUT] = {"class_type": "ImageCompositeMasked", "inputs": {
-                "destination": [BACKDROP, 0], "source": reference, "x": 0, "y": 0, "resize_source": False, "mask": [MASK, 0]}}
-            reference = [CUTOUT, 0]
-        graph[SMALL] = {"class_type": "ImageScaleToTotalPixels", "inputs": {
+            graph[str(base)] = {"class_type": "RemoveBackground", "inputs": {"bg_removal_model": [MASK_MODEL, 0], "image": reference}}
+            graph[str(base + 1)] = {"class_type": "GetImageSize", "inputs": {"image": reference}}
+            graph[str(base + 2)] = {"class_type": "EmptyImage", "inputs": {
+                "width": [str(base + 1), 0], "height": [str(base + 1), 1], "batch_size": 1, "color": GREY}}
+            graph[str(base + 3)] = {"class_type": "ImageCompositeMasked", "inputs": {
+                "destination": [str(base + 2), 0], "source": reference, "x": 0, "y": 0, "resize_source": False, "mask": [str(base), 0]}}
+            reference = [str(base + 3), 0]
+        graph[str(80 + n)] = {"class_type": "ImageScaleToTotalPixels", "inputs": {
             "image": reference, "upscale_method": "lanczos", "megapixels": REF_MEGAPIXELS, "resolution_steps": 32}}
-        cond["ref_images.ref_image_0"] = [SMALL, 0]
+        cond[key] = [str(80 + n), 0]
 
     if auto:
         # The prompt for the picked people: each one's picture described by the text model, put in its gap.
@@ -408,7 +415,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
         cond["prompt"] = [FILL, 0]
 
     if people:
-        marked = mark_nodes(graph, [dict(p, color=color_hex(p["color"])) for p in people], PEOPLE_OPACITY)
+        marked = mark_nodes(graph, [dict(p, color=color_hex(p["color"])) for p in people], 1.0 if swapping else PEOPLE_OPACITY)
     else:
         marked = mark_nodes(graph, [{"x": mark["x"], "y": mark["y"], "color": MARK_COLOR}], mark.get("opacity", 1.0)) if mark else [GUIDE, 0]
     if tara:

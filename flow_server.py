@@ -755,9 +755,11 @@ async def generate(request):
                 raise web.HTTPBadRequest(text="Motion can't run on HyperFlow, whose schedule is its own: pick another model.")
             method = body.get("motionMethod") if body.get("motionMethod") in swap.METHODS else "guide"
             st = swap.status()
-            why = st["modes"]["motion"] if method == "guide" else st["methods"]["tara"]
+            why = st["modes"]["motion"] if method == "guide" else st["methods"][method]
             if why:
                 raise web.HTTPBadRequest(text=why)
+            if method == "swap" and not body.get("motionPeople"):
+                raise web.HTTPBadRequest(text="Character Swap on marked people needs the people picked: Pick the people on the Motion chip.")
             path = clip_path(motion)
             if not os.path.isfile(path):
                 raise web.HTTPBadRequest(text="The video file to take the motion from is gone.")
@@ -782,8 +784,9 @@ async def generate(request):
                                method=clip["motion"]["method"], people=clip["motion"]["people"])
             clip["steps"] = graph["12"]["inputs"]["steps"]
             if not clip["prompt"]:
-                clip["prompt"] = graph["10"]["inputs"]["prompt"] if isinstance(graph["10"]["inputs"]["prompt"], str) \
-                    else swap.people_prompt(clip["motion"]["people"])
+                # The prompt written for the picked people (its gaps filled by the text model while it renders).
+                sent = graph["10"]["inputs"]["prompt"]
+                clip["prompt"] = sent if isinstance(sent, str) else graph[str(swap.FILL_NODE)]["inputs"]["string"]
         else:
             graph = h3_graph.build_graph(clip, images, name=clip_info.file_stem(clip))
         clip["prompt_id"] = await queue(graph, clip_info.extra_data(clip), body.get("client_id"))
