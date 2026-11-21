@@ -68,6 +68,7 @@ _exports = {}   # export id -> {"cancel": bool}
 
 DEFAULT_UI = {
     "motion": None,   # the Video tab's Motion from: the id of the video that gives the motion, or None
+    "motionMethod": "tara",   # and how: "tara" (Motion Transfer TARA v1.0) or "guide" (Motion Transfer v1.0)
     "settings": {"model": "HyperFlow H3 Flash", "steps": 6, "res": 0.6, "aspect": "16:9", "len": 5,
                  "seedMode": "random", "seed": 48213, "loras": [], "realism": {"on": True, "strength": 1.2}},
     "imageSettings": {"model": "MOSS-Image SFT (INT8)", "steps": 50, "cfg": 3.0, "res": 1.0, "aspect": "1:1",
@@ -750,24 +751,28 @@ async def generate(request):
                 raise web.HTTPBadRequest(text="Motion needs at least one picture: <Picture 1> is usually who performs it.")
             if not any(m["id"] == model["id"] for m in swap.models(models)):
                 raise web.HTTPBadRequest(text="Motion can't run on HyperFlow, whose schedule is its own: pick another model.")
-            why = swap.status()["modes"]["motion"]
+            method = body.get("motionMethod") if body.get("motionMethod") in swap.METHODS else "guide"
+            st = swap.status()
+            why = st["modes"]["motion"] if method == "guide" else st["methods"]["tara"]
             if why:
                 raise web.HTTPBadRequest(text=why)
             path = clip_path(motion)
             if not os.path.isfile(path):
                 raise web.HTTPBadRequest(text="The video file to take the motion from is gone.")
             w, h, frames = swap.guide_shape(path, res)
-            if frames < 5:
-                raise web.HTTPBadRequest(text="That video is too short for H3.")
+            if frames < (swap.TARA_MIN_FRAMES if method == "tara" else 5):
+                raise web.HTTPBadRequest(text="That video is too short: TARA needs at least 2 seconds." if method == "tara"
+                                         else "That video is too short for H3.")
             clip.update({"width": w, "height": h, "len": round(frames / 24, 2), "aspect": motion.get("aspect") or aspect,
-                         "prompt": swap.motion_prompt(prompt), "motion": {"from": motion["id"]}})
+                         "prompt": swap.motion_prompt(prompt), "motion": {"from": motion["id"], "method": method}})
             clip.pop("refmods", None)
             clip.pop("realism", None)
 
     try:
         if motion:
             graph = swap.build(clip, images, "%s/%s" % (motion.get("subfolder") or ROOT + "/clips", motion["file"]), "motion",
-                               megapixels=res, name=clip_info.file_stem(clip) + "_motion", model=model["id"])
+                               megapixels=res, name=clip_info.file_stem(clip) + "_motion", model=model["id"],
+                               method=clip["motion"]["method"])
             clip["steps"] = graph["12"]["inputs"]["steps"]
         else:
             graph = h3_graph.build_graph(clip, images, name=clip_info.file_stem(clip))
