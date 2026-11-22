@@ -275,7 +275,7 @@ def mark_nodes(graph, people, opacity):
                                "(gear menu › Models › Swap).")
     graph[SAM_LOADER] = {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": name}}
     graph[MARK_NODE] = {"class_type": "MMVisionMarkPeople", "inputs": {
-        "images": [GUIDE, 0], "sam_model": [SAM_LOADER, 0], "opacity": float(opacity),
+        "images": [GUIDE, 0], "sam_model": [SAM_LOADER, 0], "sam_clip": [SAM_LOADER, 1], "opacity": float(opacity),
         "people": json.dumps([{"x": float(p["x"]), "y": float(p["y"]), "color": p["color"]} for p in people])}}
     return [MARK_NODE, 0]
 
