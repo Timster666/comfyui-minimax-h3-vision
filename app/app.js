@@ -673,13 +673,15 @@ function motionChip() {
 // in a colour through the clip (SAM 3), and with an empty prompt Vision writes the author's prompt for them.
 const PEOPLE_COLORS = [["red", "#DC463C"], ["blue", "#2D7DE1"], ["green", "#32B45A"], ["yellow", "#EBCD23"]];
 const PEOPLE = { check: null };
+// Which clip and clicks a check was made for: reopening keeps it while they're the same.
+const peopleKey = () => state.motion + ":" + state.motionPeople.map((p) => p.x + "," + p.y).join(";");
 function openPeople() {
   const c = motionSource(state.motion);
   if (!c) return;
   if (!state.motionMarks) { say("Picking the people needs SAM 3.1: gear menu › Models › Swap and Motion."); return; }
   $("ppFrame").src = clipUrl(c);
   $("ppExtra").value = state.motionExtra;
-  PEOPLE.check = null;
+  if (PEOPLE.check && PEOPLE.check.key !== peopleKey()) PEOPLE.check = null;
   drawPeople();
   $("peopleModal").hidden = false;
 }
@@ -708,7 +710,8 @@ function drawPeople() {
     : `<video src="${ck.url}" autoplay muted loop playsinline></video><span class="hint">Each colour is one person. Wrong one, or lost on the way? Remove them and click again.</span>`;
 }
 async function checkPeople() {
-  PEOPLE.check = { state: "working" };
+  const key = peopleKey();
+  PEOPLE.check = { state: "working", key };
   drawPeople();
   try {
     const { prompt_id } = await api("POST", "clips/" + state.motion + "/swap-mark", { people: state.motionPeople, res: state.settings.res });
@@ -717,10 +720,10 @@ async function checkPeople() {
       await new Promise((r) => setTimeout(r, 2000));
       const r = await api("GET", "swap-mark/" + prompt_id);
       if (PEOPLE.check?.pid !== prompt_id || r.state === "working") continue;
-      PEOPLE.check = r.state === "done" ? { state: "done", url: fileUrl(r.subfolder, r.file) } : { state: "failed", error: r.error };
+      PEOPLE.check = r.state === "done" ? { state: "done", key, url: fileUrl(r.subfolder, r.file) } : { state: "failed", key, error: r.error };
       drawPeople();
     }
-  } catch (error) { PEOPLE.check = { state: "failed", error: error.message }; drawPeople(); }
+  } catch (error) { PEOPLE.check = { state: "failed", key, error: error.message }; drawPeople(); }
 }
 $("ppExtra").addEventListener("input", (e) => { state.motionExtra = e.target.value; saveUi(); });
 $("ppFrameBox").addEventListener("click", (e) => {
