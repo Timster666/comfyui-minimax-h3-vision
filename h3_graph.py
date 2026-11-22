@@ -97,7 +97,13 @@ PROFILES = {
     # for motion is res_multistep/simple at 6 to 8 steps.
     "eros_b5": {
         "title": "10Eros Max beta 5",
-        "unet": ["10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors", "10Eros_Max_h3_TURBO-hybrid_beta5*"],
+        "unet": ["10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors", "10Eros_Max_h3_TURBO-hybrid_beta5*int8*"],
+        "steps": 8,
+        "sampler": "res_multistep",
+    },
+    "eros_b5_full": {
+        "title": "10Eros Max beta 5 full",
+        "unet": ["10Eros_Max_h3_TURBO-hybrid_beta5.safetensors"],
         "steps": 8,
         "sampler": "res_multistep",
     },
