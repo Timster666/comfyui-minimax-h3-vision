@@ -623,13 +623,13 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
 .rm-pic input { position: absolute; top: 4px; left: 4px; }
 .rm-pic input:checked ~ img { border-color: var(--accent); }
 .sw-pick { display: flex; flex-direction: column; gap: 8px; }
-.sw-frame { position: relative; cursor: crosshair; border-radius: 10px; overflow: hidden; background: #000; }
+.sw-frame { flex-shrink: 0; position: relative; cursor: crosshair; border-radius: 10px; overflow: hidden; background: #000; }
 .sw-frame video, .sw-check video { display: block; width: 100%; height: auto; max-height: 300px; object-fit: contain; }
 .sw-frame video { pointer-events: none; }
 .sw-dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: #DC463C; border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.4); pointer-events: none; }
 .sw-pick-row { display: flex; align-items: center; gap: 10px; }
 .sw-pick-row .seg { flex: 1; }
-.sw-check { display: flex; flex-direction: column; gap: 6px; }
+.sw-check { flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
 .sw-check video { border-radius: 10px; }
 .hint.warn { color: var(--danger, #e5484d); }
 .pp-dot { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; border: 2px solid #fff; color: #fff; font-size: 11px; font-weight: 700; line-height: 16px; text-align: center; box-shadow: 0 0 0 2px rgba(0,0,0,.4); pointer-events: none; }
