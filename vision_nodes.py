@@ -117,7 +117,10 @@ class MarkPeople(io.ComfyNode):
     """People in a guide video, each painted in their own colour, so a swap or a motion transfer knows who becomes
     whom: SAM 3 finds each person at a point on the first frame and follows them through the clip. The
     point-to-person logic is Henge's (github.com/alisson-anjos/Henge, MIT, point_tracking.py): of the masks at the
-    point, the largest that contains it. Everyone is found on the unpainted frame and followed on their own."""
+    point, the largest that contains it. A click usually gives just the part clicked (a head), so the whole people
+    are found too, as Henge's find_people does (SAM 3's text prompt "person", up to 8), and the person the click is
+    in is the one marked. Each mark is grown a little, so no edge of the original person is left to come through.
+    Everyone is found on the unpainted frame and followed on their own."""
 
     @classmethod
     def define_schema(cls):
@@ -126,7 +129,7 @@ class MarkPeople(io.ComfyNode):
             display_name="Vision Mark People",
             category=CATEGORY,
             description="Paint the people at points of the first frame, each in a colour, through the whole clip, with SAM 3.",
-            inputs=[io.Image.Input("images"), io.Model.Input("sam_model"),
+            inputs=[io.Image.Input("images"), io.Model.Input("sam_model"), io.Clip.Input("sam_clip"),
                     io.String.Input("people", default='[{"x": 0.5, "y": 0.5, "color": "#DC463C"}]',
                                     tooltip='JSON: [{"x", "y", "color"}], x and y from 0 to 1 across and down the first frame.'),
                     io.Float.Input("opacity", default=1.0, min=0.1, max=1.0, step=0.05)],
@@ -134,23 +137,43 @@ class MarkPeople(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, images, sam_model, people, opacity) -> io.NodeOutput:
+    def execute(cls, images, sam_model, sam_clip, people, opacity) -> io.NodeOutput:
         from comfy.ldm.sam3.tracker import unpack_masks
         from comfy_extras.nodes_sam3 import SAM3_Detect, SAM3_VideoTrack
         n, h, w = images.shape[:3]
         marked, union = images.clone(), torch.zeros(n, h, w, dtype=torch.bool)
+
+        def full_size(found):
+            found = found.cpu() > 0.5
+            if found.numel() and tuple(found.shape[-2:]) != (h, w):
+                found = torch.nn.functional.interpolate(found.float()[:, None], size=(h, w), mode="nearest")[:, 0] > 0.5
+            return found
+
+        # Everyone in the first frame, whole (Henge's find_people: SAM 3 keeps one detection per text prompt unless
+        # the prompt asks for more).
+        cond = sam_clip.encode_from_tokens_scheduled(sam_clip.tokenize("person"))
+        cond = [[cond[0][0], {**cond[0][1], "sam3_multi_cond": [
+            {"cond": cond[0][0], "attention_mask": cond[0][1].get("attention_mask"), "max_detections": 8}]}]]
+        everyone = full_size(SAM3_Detect.execute(model=sam_model, image=images[:1], conditioning=cond, threshold=0.4,
+                                                 refine_iterations=1, individual_masks=True)[0])
+        grow = max(3, round(0.012 * min(h, w)))
         for number, person in enumerate(json.loads(people), 1):
             px = min(w - 1, max(0, round(float(person["x"]) * w)))
             py = min(h - 1, max(0, round(float(person["y"]) * h)))
             # More decoder refinement drops the point prompt (Henge's note), so one pass.
-            found = SAM3_Detect.execute(model=sam_model, image=images[:1], positive_coords=json.dumps([{"x": px, "y": py}]),
-                                        refine_iterations=1, individual_masks=True)[0].cpu() > 0.5
-            if tuple(found.shape[-2:]) != (h, w):
-                found = torch.nn.functional.interpolate(found.float()[:, None], size=(h, w), mode="nearest")[:, 0] > 0.5
-            candidates = [m for m in found if bool(m[py, px])]
-            if not candidates:
+            found = full_size(SAM3_Detect.execute(model=sam_model, image=images[:1], positive_coords=json.dumps([{"x": px, "y": py}]),
+                                                  refine_iterations=1, individual_masks=True)[0])
+            part = max([m for m in found if bool(m[py, px])], key=lambda m: int(m.sum()), default=None)
+            # The whole person the click is in: the smallest one that holds it when people overlap, else the one
+            # that shares the most with what the click found.
+            holders = [m for m in everyone if bool(m[py, px])]
+            whole = min(holders, key=lambda m: int(m.sum())) if holders else None
+            if whole is None and part is not None and len(everyone):
+                best = max(everyone, key=lambda m: int((m & part).sum()))
+                whole = best if int((best & part).sum()) > 0.5 * int(part.sum()) else None
+            if whole is None and part is None:
                 raise ValueError("SAM found nobody at person %d's point on the first frame: click inside the person." % number)
-            seed = max(candidates, key=lambda m: int(m.sum())).float()[None]
+            seed = (whole if part is None else part if whole is None else whole | part).float()[None]
             mask = torch.zeros(n, h, w, dtype=torch.bool)
             if n > 1:
                 packed = SAM3_VideoTrack.execute(images=images, model=sam_model, initial_mask=seed, max_objects=1)[0].get("packed_masks")
@@ -160,6 +183,8 @@ class MarkPeople(io.ComfyNode):
                         followed = torch.nn.functional.interpolate(followed, size=(h, w), mode="nearest")
                     mask |= followed[:, 0] > 0.5
             mask[0] = seed[0].bool()
+            # A few pixels more all round, so hair, fingers and blurred edges of the original are painted too.
+            mask = torch.nn.functional.max_pool2d(mask.float()[:, None], 2 * grow + 1, stride=1, padding=grow)[:, 0] > 0.5
             color = str(person["color"]).lstrip("#")
             rgb = torch.tensor([int(color[i:i + 2], 16) / 255 for i in (0, 2, 4)], dtype=images.dtype)
             marked[mask] = rgb if opacity >= 1 else images[mask] * (1 - opacity) + rgb * opacity
