@@ -62,6 +62,7 @@ const state = {
   motionMethod: "tara",      // "tara" (Motion Transfer TARA v1.0, several people) or "guide" (Motion Transfer v1.0)
   motionWhy: { tara: null, swap: null },  // why a method can't run here (from GET swap)
   motionPeople: [],          // Motion's picked people: [{x, y, picture}], painted in PEOPLE_COLORS' order
+  motionExtra: "",           // instructions added to the end of the prompt Vision writes for them
   motionMarks: false,        // whether SAM 3.1 is here to mark them
   motionTurbo: {},           // per model id that Motion can use: whether it runs its own way (a turbo build)
   pickingMotion: false,      // the next video clicked in the gallery becomes Motion from
@@ -323,7 +324,7 @@ function saveUi() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     state.drafts[draftKey()] = state.prompt;
-    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, motionMethod: state.motionMethod, motionPeople: state.motionPeople, perRow: state.perRow,
+    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, motionMethod: state.motionMethod, motionPeople: state.motionPeople, motionExtra: state.motionExtra, perRow: state.perRow,
       prompt: state.drafts.video, imagePrompt: state.drafts.image, imageNegative: state.negative, negativeOpen: state.negativeOpen,
       kleinSettings: state.kleinSettings, kleinPrompt: state.drafts.klein, kleinSlots: state.kleinSlots,
       kleinMode: state.kleinMode, kleinSwapSlots: state.kleinSwapSlots, kleinSwapPrompt: state.drafts.kleinSwap, kleinSwapMask: state.kleinSwapMask,
@@ -663,7 +664,7 @@ function motionChip() {
           <option value="guide" ${motionMethodNow() === "guide" ? "selected" : ""}>Motion Transfer v1.0</option>
           <option value="swap" ${motionMethodNow() === "swap" ? "selected" : ""} ${state.motionWhy.swap ? "disabled" : ""}>Character Swap · marked people</option>
         </select>
-        <button class="link" data-act="openPeople">${state.motionPeople.length ? state.motionPeople.length + (state.motionPeople.length === 1 ? " person" : " people") + " picked · change" : "Pick the people"}</button>
+        <button class="link" data-act="openPeople">${state.motionPeople.length ? state.motionPeople.length + (state.motionPeople.length === 1 ? " person" : " people") + " picked" + (state.motionExtra.trim() ? " + extra" : "") + " · change" : "Pick the people"}</button>
         ${state.motionPeople.length ? "" : `<button class="link" data-act="motionTemplate">Use the author's prompt</button>`}</span>
       <button class="ref-x motion-x" data-act="clearMotion" aria-label="Stop taking the motion of this video">${ICON.x}</button>
     </div>`;
@@ -677,6 +678,7 @@ function openPeople() {
   if (!c) return;
   if (!state.motionMarks) { say("Picking the people needs SAM 3.1: gear menu › Models › Swap and Motion."); return; }
   $("ppFrame").src = clipUrl(c);
+  $("ppExtra").value = state.motionExtra;
   PEOPLE.check = null;
   drawPeople();
   $("peopleModal").hidden = false;
@@ -720,6 +722,7 @@ async function checkPeople() {
     }
   } catch (error) { PEOPLE.check = { state: "failed", error: error.message }; drawPeople(); }
 }
+$("ppExtra").addEventListener("input", (e) => { state.motionExtra = e.target.value; saveUi(); });
 $("ppFrameBox").addEventListener("click", (e) => {
   if (state.motionPeople.length >= PEOPLE_COLORS.length) return;
   const box = $("ppFrame").getBoundingClientRect(), r = ppFrameRect();
@@ -761,7 +764,7 @@ async function loadMotionStatus() {
   } catch {}
 }
 function setMotion(id) {
-  if (id !== state.motion) state.motionPeople = [];
+  if (id !== state.motion) { state.motionPeople = []; state.motionExtra = ""; }
   state.motion = id;
   state.pickingMotion = false;
   if (state.tab !== "video") ACT.tab("video");
@@ -2520,7 +2523,8 @@ function generateBody() {
     pictures: state.tab === "video" ? state.attached.filter((id) => state.refs.some((r) => r.id === id)) : undefined,
     motion: state.tab === "video" && state.motion && motionSource(state.motion) ? state.motion : undefined,
     motionMethod: motionMethodNow(),
-    motionPeople: state.tab === "video" && state.motion && motionSource(state.motion) && state.motionPeople.length ? state.motionPeople : undefined } };
+    motionPeople: state.tab === "video" && state.motion && motionSource(state.motion) && state.motionPeople.length ? state.motionPeople : undefined,
+    motionExtra: state.motionPeople.length && state.motionExtra.trim() ? state.motionExtra.trim() : undefined } };
 }
 
 async function generate() {
@@ -4388,6 +4392,7 @@ async function load(first = true) {
       state.motion = ui.motion && motionSource(ui.motion) ? ui.motion : null;
       state.motionMethod = ["guide", "swap"].includes(ui.motionMethod) ? ui.motionMethod : "tara";
       state.motionPeople = state.motion && Array.isArray(ui.motionPeople) ? ui.motionPeople : [];
+      state.motionExtra = typeof ui.motionExtra === "string" ? ui.motionExtra : "";
       state.perRow = ui.perRow || 3;
       state.prompt = state.drafts[state.tab];
       state.caret = state.prompt.length;

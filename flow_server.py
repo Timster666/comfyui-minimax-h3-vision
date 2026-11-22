@@ -70,6 +70,7 @@ DEFAULT_UI = {
     "motion": None,   # the Video tab's Motion from: the id of the video that gives the motion, or None
     "motionMethod": "tara",   # and how: "tara" (Motion Transfer TARA v1.0) or "guide" (Motion Transfer v1.0)
     "motionPeople": [],       # its picked people: [{x, y, picture}] on the video's first frame
+    "motionExtra": "",        # instructions added to the end of the prompt Vision writes for them
     "settings": {"model": "HyperFlow H3 Flash", "steps": 6, "res": 0.6, "aspect": "16:9", "len": 5,
                  "seedMode": "random", "seed": 48213, "loras": [], "realism": {"on": True, "strength": 1.2}},
     "imageSettings": {"model": "MOSS-Image SFT (INT8)", "steps": 50, "cfg": 3.0, "res": 1.0, "aspect": "1:1",
@@ -771,8 +772,9 @@ async def generate(request):
             if people and not swap.sam():
                 raise web.HTTPBadRequest(text="Picking the people needs SAM 3.1 (gear menu › Models › Swap and Motion).")
             clip.update({"width": w, "height": h, "len": round(frames / 24, 2), "aspect": motion.get("aspect") or aspect,
-                         "prompt": swap.motion_prompt(prompt) if prompt else "",
+                         "prompt": (swap.swap_prompt(prompt) if method == "swap" else swap.motion_prompt(prompt)) if prompt else "",
                          "motion": {"from": motion["id"], "method": method, "people": people or None,
+                                    "extra": " ".join(str(body.get("motionExtra") or "").split())[:1000] or None if people and not prompt else None,
                                     "described": bool(people and not prompt and swap.describer())}})
             clip.pop("refmods", None)
             clip.pop("realism", None)
@@ -781,7 +783,7 @@ async def generate(request):
         if motion:
             graph = swap.build(clip, images, "%s/%s" % (motion.get("subfolder") or ROOT + "/clips", motion["file"]), "motion",
                                megapixels=res, name=clip_info.file_stem(clip) + "_motion", model=model["id"],
-                               method=clip["motion"]["method"], people=clip["motion"]["people"])
+                               method=clip["motion"]["method"], people=clip["motion"]["people"], extra=clip["motion"]["extra"] or "")
             clip["steps"] = graph["12"]["inputs"]["steps"]
             if not clip["prompt"]:
                 # The prompt written for the picked people (its gaps filled by the text model while it renders).

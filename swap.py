@@ -311,6 +311,12 @@ def guide_shape(path, megapixels):
     return max(32, round(src_w * scale / 32) * 32), max(32, round(src_h * scale / 32) * 32), length
 
 
+def with_extra(prompt, extra):
+    """The automatic prompt with the person's extra instructions after it, as Henge adds a request."""
+    extra = " ".join(str(extra or "").split())
+    return prompt + (" " + extra if extra else "")
+
+
 def swap_prompt(prompt):
     """A person's own prompt for Character Swap on marked people, with its trigger in front."""
     prompt = prompt.strip()
@@ -324,7 +330,7 @@ def motion_prompt(prompt):
 
 
 def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE, method="guide",
-          people=None):
+          people=None, extra=""):
     """The graph that swaps the picture's character (or head) into a video.
 
     clip: the new clip: the picture as <Picture 1>, the seed, and the prompt (made here from the template).
@@ -335,7 +341,8 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     Motion: clip carries up to 9 pictures, the person's own prompt and LoRAs (details is not used); method "tara" runs
     Motion Transfer TARA v1.0 the author's way, "guide" Motion Transfer v1.0. people: Motion's picked people,
     [{x, y, picture, color}]: each painted in its colour on the guide; with an empty prompt, the prompt is written for
-    them, each picture described by MOSS-Image's text model (or called "the character" without it).
+    them, each picture described by MOSS-Image's text model (or called "the character" without it), with extra (the
+    person's own instructions, as Henge adds a request) at the end.
     """
     files = h3_graph.available() if files is None else files
     spec = MODES[mode]
@@ -357,7 +364,7 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
                 loras=([] if own else [{"name": TURBO, "strength": 1.0}])
                 + [{"name": TARA_LORA if tara else MODES["character"]["lora"] if swapping else spec["lora"], "strength": 1.0}]
                 + (list(clip.get("loras") or []) if motion else []),
-                prompt=people_prompt(people, SWAP_TRIGGER, solid=True) if auto and swapping else people_prompt(people) if auto
+                prompt=with_extra(people_prompt(people, SWAP_TRIGGER, solid=True) if swapping else people_prompt(people), extra) if auto
                 else swap_prompt(clip["prompt"]) if swapping else motion_prompt(clip["prompt"]) if motion
                 else prompt_of(mode, details, bool(mark)) if details.strip() else template_of(mode, bool(mark)))
     graph = h3_graph.build_graph(clip, images, files=files, name=name)
