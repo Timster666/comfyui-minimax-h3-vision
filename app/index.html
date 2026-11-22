@@ -996,7 +996,10 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
       <div class="pp-list" id="ppList"></div>
       <div class="sw-pick-row"><button class="btn" id="ppCheck" data-act="peopleCheck">Check the marks</button><button class="link" data-act="peopleClear">Remove all</button></div>
       <div class="sw-check" id="ppCheckOut"></div>
-      <span class="hint">Leave the prompt empty and Vision writes the author's prompt for these people, with MOSS-Image's text model describing each picture. Your own prompt is used instead if you write one.</span>
+      <label class="rm-field"><span class="label">Extra instructions (optional)</span>
+        <textarea class="lm-link sw-details" id="ppExtra" rows="2" spellcheck="false" placeholder="At night, in heavy rain, with neon reflections on the street."></textarea>
+        <span class="hint">Added to the end of the prompt Vision writes, for weather, light, mood or style. Keep the people out of it: who becomes whom is set above.</span></label>
+      <span class="hint">Leave the prompt box empty and Vision writes the author's prompt for these people, with MOSS-Image's text model describing each picture. If you write your own prompt, it's used instead, and the extra instructions are left out.</span>
     </div>
     <div class="lm-foot"><span class="lm-hint">On the chip: Character Swap keeps the scene and swaps just these people; TARA or v1.0 transfer the motion.</span><button class="btn primary" data-act="peopleDone">Done</button></div>
   </div>
