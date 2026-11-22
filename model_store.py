@@ -132,7 +132,114 @@ def forget_token():
 
 def catalog():
     with open(CATALOG_FILE, encoding="utf-8") as f:
-        return json.load(f)["groups"]
+        return json.load(f)["groups"] + [custom_group(m) for m in custom()]
+
+
+# ---- Video models added from a Hugging Face link (kept on the volume, next to the models) ----
+SAMPLERS = ["euler", "lcm", "res_multistep"]
+SCHEDULERS = ["simple", "beta", "beta57"]
+
+
+def custom_file():
+    return os.path.join(models_dir(), "mmvision_custom_models.json")
+
+
+def custom():
+    try:
+        with open(custom_file(), encoding="utf-8") as f:
+            return [m for m in json.load(f) if isinstance(m, dict) and m.get("id") and m.get("file")]
+    except (OSError, ValueError):
+        return []
+
+
+def save_custom(rows):
+    path = custom_file()
+    temp = path + ".tmp"
+    with open(temp, "w", encoding="utf-8") as f:
+        json.dump(rows, f, indent=1)
+    os.replace(temp, path)
+    register_custom()
+
+
+def custom_group(m):
+    return {"id": "custom-" + m["id"], "tab": "video", "name": m["name"], "needs": ["h3-base"], "custom": True, "url": m.get("url"),
+            "about": "Added from a link: %s steps, %s / %s." % (m["steps"], m["sampler"], m["scheduler"]),
+            "files": [[m["repo"], m["file"], "diffusion_models"]]}
+
+
+def register_custom():
+    """Put the added models among the video models (h3_graph's families), as custom_<id>."""
+    from . import h3_graph
+    for key in [k for k in h3_graph.PROFILES if k.startswith(h3_graph.CUSTOM)]:
+        del h3_graph.PROFILES[key]
+    for m in custom():
+        h3_graph.PROFILES[h3_graph.CUSTOM + m["id"]] = {"title": m["name"], "unet": [m["file"]], "steps": int(m["steps"]),
+                                                        "sampler": m["sampler"], "scheduler": m["scheduler"], "custom": True}
+
+
+def parse_link(url):
+    """(repo, path in the repo) from a Hugging Face file link: .../owner/repo/blob|resolve/revision/path."""
+    import re
+    m = re.match(r"^\s*https?://(?:www\.)?(?:huggingface\.co|hf\.co)/([\w.-]+/[\w.-]+)/(?:blob|resolve)/[^/]+/(.+?)(?:\?.*)?\s*$", url or "")
+    if not m:
+        raise ValueError("That isn't a link to a file on Hugging Face: open the file there and copy its address "
+                         "(huggingface.co/owner/repo/blob/main/name.safetensors).")
+    path = m.group(2)
+    if not path.endswith(".safetensors"):
+        raise ValueError("The link must be to a .safetensors file.")
+    return m.group(1), path
+
+
+async def add_custom(url, name, steps, sampler, scheduler):
+    """Check the link with Hugging Face, add the model to the list and return its group id (to download)."""
+    from . import h3_graph
+    repo, path = parse_link(url)
+    file = path.split("/")[-1]
+    taken = h3_graph.profile_for(file)
+    if taken:
+        raise ValueError("%s is already in the list, as %s." % (file, h3_graph.PROFILES[taken]["title"]))
+    try:
+        steps = int(steps)
+    except (TypeError, ValueError):
+        steps = 0
+    if not 1 <= steps <= 60:
+        raise ValueError("Steps go from 1 to 60.")
+    if sampler not in SAMPLERS or scheduler not in SCHEDULERS:
+        raise ValueError("Pick a sampler and a scheduler from the list.")
+    proc = await asyncio.create_subprocess_exec(sys.executable, "-c", SIZES, repo, file, stdout=asyncio.subprocess.PIPE,
+                                                stderr=asyncio.subprocess.PIPE, env=child_env())
+    out, err = await proc.communicate()
+    if proc.returncode != 0:
+        text = err.decode("utf-8", "replace")
+        if any(k in text for k in ("ProxyError", "ConnectError", "ConnectionError", "Temporary failure", "timed out")):
+            raise ValueError("Couldn't reach Hugging Face: " + (text.strip().splitlines() or ["unknown error"])[-1][:200])
+        if any(k in text for k in ("401", "403", "Gated", "gated")):
+            raise ValueError("Hugging Face won't show %s: it's gated or private. Paste a token at the top of this page, and accept its license on Hugging Face." % repo)
+        if "404" in text or "RepositoryNotFound" in text:
+            raise ValueError("There's no repository %s on Hugging Face." % repo)
+        raise ValueError("Couldn't reach Hugging Face: " + (text.strip().splitlines() or ["unknown error"])[-1][:200])
+    size = json.loads(out.decode().strip().splitlines()[-1]).get(file)
+    if not size:
+        raise ValueError("%s isn't in %s." % (file, repo))
+    rows = custom()
+    base = "".join(c if c.isalnum() else "_" for c in file[:-12].lower())[:48].strip("_") or "model"
+    key, n = base, 2
+    while any(r["id"] == key for r in rows):
+        key, n = "%s_%d" % (base, n), n + 1
+    name = (name or "").strip()[:80] or file[:-12]
+    rows.append({"id": key, "name": name, "url": url.strip(), "repo": repo, "file": file, "steps": steps, "sampler": sampler, "scheduler": scheduler})
+    save_custom(rows)
+    STORE.sizes[repo + "/" + file] = size
+    return "custom-" + key
+
+
+def remove_custom(group_id):
+    """Take an added model off the list (its file is deleted separately, with Delete)."""
+    key = group_id[len("custom-"):]
+    rows = custom()
+    if not any(r["id"] == key for r in rows):
+        raise KeyError(group_id)
+    save_custom([r for r in rows if r["id"] != key])
 
 
 def models_dir():
@@ -226,14 +333,15 @@ class Store:
                 state = "downloading"
             elif g["id"] in self.queue:
                 state = "queued"
-            groups.append({**{k: g.get(k) for k in ("id", "tab", "name", "about", "env", "gated", "needs")},
+            groups.append({**{k: g.get(k) for k in ("id", "tab", "name", "about", "env", "gated", "needs", "custom", "url")},
                            "files": files, "state": state, "error": self.errors.get(g["id"]),
                            "missingBytes": sum(f["size"] or 0 for f in files if not f["installed"]),
                            "unknownSize": any(not f["installed"] and not f["size"] for f in files),
                            "bytes": sum(f["size"] or 0 for f in files)})
         usage = shutil.disk_usage(models_dir())
         return {"groups": groups, "job": self.job, "queue": list(self.queue),
-                "disk": {"free": usage.free, "total": usage.total}, "token": token_state()}
+                "disk": {"free": usage.free, "total": usage.total}, "token": token_state(),
+                "add": {"samplers": SAMPLERS, "schedulers": SCHEDULERS}}
 
     # ---- Downloads -----------------------------------------------------------
     def download(self, group_id):

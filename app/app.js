@@ -983,6 +983,28 @@ function renderToken(t) {
   }
 }
 
+// Add a video model from a Hugging Face link: a form of its own, so the page's redraws don't clear it.
+function renderAddModel(add) {
+  if (!add || $("mAddSampler").options.length) return;
+  $("mAddSampler").innerHTML = add.samplers.map((x) => `<option>${esc(x)}</option>`).join("");
+  $("mAddScheduler").innerHTML = add.schedulers.map((x) => `<option>${esc(x)}</option>`).join("");
+}
+$("mAddForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("mAddGo").disabled = true; $("mAddGo").textContent = "Checking the link…"; $("mAddErr").textContent = "";
+  try {
+    const r = await api("POST", "models/add", { url: $("mAddUrl").value, name: $("mAddName").value, steps: Number($("mAddSteps").value),
+      sampler: $("mAddSampler").value, scheduler: $("mAddScheduler").value });
+    MODELS.data = r; MODELS.wasBusy = true;
+    $("mAddUrl").value = ""; $("mAddName").value = "";
+    $("mAddForm").hidden = true; $("mAddOpen").hidden = false; $("mAddOpen").setAttribute("aria-expanded", "false");
+    say("Added. Downloading in the background: it shows up among the video models when it's in.");
+    MODELS.filter = "all"; renderModels(false); pollModels(false);
+    document.getElementById("mg-" + r.added)?.scrollIntoView({ block: "center" });
+  } catch (error) { $("mAddErr").textContent = error.message; }
+  $("mAddGo").disabled = false; $("mAddGo").textContent = "Add and download";
+});
+
 function renderModels(scroll) {
   const d = MODELS.data;
   if (!d) return;
@@ -994,6 +1016,7 @@ function renderModels(scroll) {
       <span class="disk-bar"><span class="disk-used" style="width:${pct(used).toFixed(1)}%"></span><span class="disk-next" style="left:${pct(used).toFixed(1)}%;width:${pct(pending).toFixed(1)}%"></span></span>
       <span class="disk-text"><b>${bytesText(d.disk.free)}</b> free of ${bytesText(d.disk.total)}${pending ? ` · ${bytesText(pending)} on the way` : ""}</span></span>`;
   renderToken(d.token || {});
+  renderAddModel(d.add);
   const byId = Object.fromEntries(d.groups.map((g) => [g.id, g]));
   const card = (g) => {
     const job = d.job && d.job.group === g.id ? d.job : null;
@@ -1009,10 +1032,12 @@ function renderModels(scroll) {
     const size = g.state === "installed" ? bytesText(g.bytes) : g.missingBytes ? bytesText(g.missingBytes) + (g.state === "partly" ? " to go" : "") + (g.unknownSize ? "+" : "") : g.unknownSize ? "size …" : "";
     return `<div class="mcard m-${g.state}" id="mg-${g.id}">
       <h3>${esc(g.name)} <span class="mstate ${g.state}">${label}</span>${g.gated && !(d.token && d.token.from) ? '<span class="mstate">Needs a Hugging Face token</span>' : ""}</h3>
-      <p>${esc(g.about || "")}</p>
+      <p>${esc(g.about || "")}${g.url ? ` <a class="mlink" href="${esc(g.url)}" target="_blank" rel="noopener">On Hugging Face</a>` : ""}</p>
       ${needs.length ? `<span class="mneeds">Also needs: ${needs.map(esc).join(", ")}</span>` : ""}
       <div class="mside"><span class="msize">${size}</span><div class="mbtns">
         ${g.state === "downloading" || g.state === "queued" ? `<button class="btn" data-act="modelCancel" data-id="${g.id}">Cancel</button>`
+          : g.custom && g.state === "installed" ? `<button class="btn danger" data-act="modelRemove" data-id="${g.id}">Remove</button>`
+          : g.custom ? `<button class="btn" data-act="modelRemove" data-id="${g.id}">Remove</button><button class="btn primary" data-act="modelGet" data-id="${g.id}">${g.state === "partly" ? "Download the rest" : "Download"}</button>`
           : g.state === "installed" ? `<button class="btn danger" data-act="modelDelete" data-id="${g.id}">Delete</button>`
           : `${g.state === "partly" ? `<button class="btn danger" data-act="modelDelete" data-id="${g.id}">Delete</button>` : ""}<button class="btn primary" data-act="modelGet" data-id="${g.id}" ${g.missingBytes > d.disk.free ? "disabled title=\"Not enough free disk space\"" : ""}>${g.state === "partly" ? "Download the rest" : "Download"}</button>`}
       </div></div>
@@ -3313,6 +3338,20 @@ const ACT = {
   modelsFilter: (id) => { MODELS.filter = id; renderModels(false); $("modelsBody").scrollTop = 0; },
   modelGet: (id) => modelAction(id, "download"),
   modelCancel: (id) => modelAction(id, "cancel"),
+  modelAddOpen: () => {
+    const open = $("mAddForm").hidden;
+    $("mAddForm").hidden = !open; $("mAddOpen").hidden = open; $("mAddOpen").setAttribute("aria-expanded", String(open));
+    $("mAddErr").textContent = "";
+    if (open) $("mAddUrl").focus();
+  },
+  modelRemove: async (id) => {
+    const g = MODELS.data && MODELS.data.groups.find((x) => x.id === id);
+    if (!g || !(await askConfirm(`Remove ${g.name}?`, g.state === "missing" ? "It comes off the list." : `It comes off the list, and its file (${bytesText(g.bytes)}) is deleted from the models folder.`, "Remove", true))) return;
+    try {
+      MODELS.data = await api("POST", `models/${id}/remove`);
+      say("Removed."); load(false); renderModels(false);
+    } catch (error) { say(error.message); }
+  },
   modelDelete: async (id) => {
     const g = MODELS.data && MODELS.data.groups.find((x) => x.id === id);
     if (!g || !(await askConfirm(`Delete ${g.name}?`, `Its files (${bytesText(g.bytes)}) are deleted from the models folder. Files another installed model needs are kept.`, "Delete", true))) return;

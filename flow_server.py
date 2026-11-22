@@ -369,6 +369,20 @@ def models_done(group_id):
     PromptServer.instance.send_sync("mmflow.models", {"done": group_id}, None)
 
 
+async def add_model(request):
+    """POST {url, name, steps, sampler, scheduler}: a video model from a Hugging Face link, added to the list and
+    downloaded in the background."""
+    body = await request.json()
+    store = model_store.STORE
+    store.on_done = models_done
+    try:
+        group = await model_store.add_custom(body.get("url"), body.get("name"), body.get("steps"), body.get("sampler"), body.get("scheduler"))
+    except ValueError as error:
+        raise web.HTTPBadRequest(text=str(error))
+    store.download(group)
+    return web.json_response({**store.status(), "added": group})
+
+
 async def get_models(request):
     if model_store.STORE.sizes_file is None:
         model_store.STORE.load_sizes(root_dir())
@@ -473,6 +487,14 @@ async def models_action(request):
             store.cancel(group)
         elif action == "delete":
             return web.json_response({**store.delete(group), **store.status()})
+        elif action == "remove":
+            # An added model off the list, and its file deleted too.
+            if store.job and store.job["group"] == group:
+                raise RuntimeError("It's downloading: cancel it first.")
+            removed = store.delete(group)
+            model_store.remove_custom(group)
+            lora_list(refresh=True)
+            return web.json_response({**removed, **store.status()})
         else:
             raise web.HTTPNotFound()
     except KeyError:
@@ -1945,6 +1967,7 @@ ROUTES = (
     ("GET", "/mmflow/api/lora-links", lora_links),
     ("POST", "/mmflow/api/lora-links", lora_links),
     ("POST", "/mmflow/api/lora-links/{id}/cancel", lora_links),
+    ("POST", "/mmflow/api/models/add", add_model),
     ("POST", "/mmflow/api/models/{id}/{action}", models_action),
     ("POST", "/mmflow/api/images/from-clip", image_from_clip),
     ("PATCH", "/mmflow/api/images/{id}", rename_image),
@@ -1977,6 +2000,10 @@ ROUTES = (
 def install():
     from server import PromptServer
 
+    try:
+        model_store.register_custom()   # video models added from a link on the Models page
+    except Exception as error:
+        LOG.warning("MiniMax H3 Vision couldn't read the added models: %s", error)
     routes = PromptServer.instance.routes
     for method, path, handler in ROUTES:
         routes.route(method, path)(handler)
