@@ -93,6 +93,14 @@ PROFILES = {
         "steps": 8,
         "sampler": "euler",
     },
+    # 10Eros Max beta 5: the TURBO hybrid build, made with a different normalization than beta 7. The card's go-to
+    # for motion is res_multistep/simple at 6 to 8 steps.
+    "eros_b5": {
+        "title": "10Eros Max beta 5",
+        "unet": ["10Eros_Max_h3_TURBO-hybrid_beta5_int8.safetensors", "10Eros_Max_h3_TURBO-hybrid_beta5*"],
+        "steps": 8,
+        "sampler": "res_multistep",
+    },
     # 10Eros Max v1.0: beta5, beta7 and Sulphur3 combined, an fl2va hybrid for pictures or first/last frames alike.
     # Its card: 8 to 12 steps with LCM/simple (res_multistep/simple at 6 to 8, Euler/simple at 4 to 8).
     "eros_v1": {
