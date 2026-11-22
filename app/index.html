@@ -426,6 +426,16 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
 .mprog span { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .merr { grid-column: 1 / -1; font-size: 12.5px; color: var(--danger); }
 .mneeds { font-size: 12px; color: var(--faint); grid-column: 1; }
+.mlink { color: var(--accent-text); font-size: 12.5px; }
+.madd { padding: 0 20px 6px; }
+.madd form { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; }
+.madd label { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.madd .madd-url { grid-column: 1 / -1; }
+.madd input, .madd select { font: inherit; font-size: 13px; background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 9px; min-width: 0; }
+.madd-btns { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; }
+.madd-hint { grid-column: 1 / -1; font-size: 12px; }
+.madd .merr:empty { display: none; }
+@media (max-width: 640px) { .madd form { grid-template-columns: 1fr 1fr; } }
 .models-note { font-size: 12.5px; color: var(--faint); margin: 10px 0 0; line-height: 1.5; }
 .slot-paint { margin-top: 2px; width: 92px; font: 500 11px var(--font); background: var(--raised); color: var(--text-soft); border: 1px solid var(--line-strong); border-radius: 6px; padding: 3px 4px; }
 .slot-paint.on { border-color: #6b5634; color: var(--accent-text); background: var(--mention-bg); }
@@ -1091,6 +1101,20 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
       <button class="zoom-x models-x" data-act="closeModels" aria-label="Close">✕</button>
     </div>
     <div class="mtoken" id="modelsToken"></div>
+    <div class="madd" id="modelsAdd">
+      <button class="link" data-act="modelAddOpen" id="mAddOpen" aria-expanded="false">+ Add a video model from a Hugging Face link</button>
+      <form id="mAddForm" hidden>
+        <label class="madd-url"><span class="label">Link to the file</span>
+          <input id="mAddUrl" type="url" spellcheck="false" autocomplete="off" placeholder="https://huggingface.co/owner/repo/blob/main/model.safetensors" required></label>
+        <label><span class="label">Name in the list</span><input id="mAddName" type="text" maxlength="80" placeholder="From the file name"></label>
+        <label><span class="label">Steps</span><input id="mAddSteps" type="number" min="1" max="60" value="8"></label>
+        <label><span class="label">Sampler</span><select id="mAddSampler"></select></label>
+        <label><span class="label">Scheduler</span><select id="mAddScheduler"></select></label>
+        <div class="madd-btns"><button type="button" class="btn" data-act="modelAddOpen">Cancel</button><button type="submit" class="btn primary" id="mAddGo">Add and download</button></div>
+        <span class="hint madd-hint">A MiniMax H3 checkpoint (ref2va, like the fine-tunes here). It goes into models/diffusion_models and shows up among the video models when it's in. Take the steps, sampler and scheduler from the model's card: you can change them in the settings too.</span>
+        <span class="merr" id="mAddErr"></span>
+      </form>
+    </div>
     <div class="models-body" id="modelsBody"></div>
   </div>
 </div>

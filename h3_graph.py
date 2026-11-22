@@ -125,6 +125,9 @@ PROFILES = {
     },
 }
 
+# Video models added on the Models page from a Hugging Face link: model_store puts them in PROFILES as custom_<id>.
+CUSTOM = "custom_"
+
 # The MMH3 Realism Slider LoRA (Civitai 3041489), as the H3 editor ran it on finals: natural, un-airbrushed skin.
 # It sits out the steps above start_sigma, which set the composition, and joins for the detail. V1 if V2 isn't there.
 REALISM_FILES = ["MMH3-Realism-V2.safetensors", "MMH3-RealismSlider-V1.safetensors"]
