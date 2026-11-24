@@ -1629,7 +1629,7 @@ async function loadRefmods(sync) {
   if (state.settingsOpen && state.tab === "video") render();
 }
 function refmodsField(s) {
-  if (!RM.installed) return RM.loaded ? `<div class="field"><span class="label">RefMods</span><span class="hint">Saved references, made from pictures. They need the ComfyUI-MiniMaxH3Mod node pack: on RunPod, set ENABLE_REFMOD=true.</span></div>` : "";
+  if (!RM.installed) return RM.loaded ? `<div class="field"><span class="label">RefMods</span><span class="hint">Saved references, made from pictures or video clips. They need the ComfyUI-MiniMaxH3Mod node pack: on RunPod, set ENABLE_REFMOD=true.</span></div>` : "";
   const chosen = s.refmods || [], left = RM.files.filter((f) => !chosen.some((m) => m.file === f));
   const making = RM.jobs.filter((j) => j.state === "making");
   return `<div class="field">
@@ -1644,7 +1644,7 @@ function refmodsField(s) {
         </div>`).join("")}
       ${chosen.length < 8 && left.length ? `<select class="select" data-change="addRefmod" aria-label="Add a RefMod"><option value="">+ Add a RefMod…</option>${left.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join("")}</select>` : ""}
       ${making.map((j) => `<span class="hint">Making ${esc(j.name)}…</span>`).join("")}
-      <span class="hint">${RM.files.length ? "Describe who is in the shot in the prompt: a RefMod has no tag." : "None yet: make one from pictures in the prompt bar."}</span>
+      <span class="hint">${RM.files.length ? "Describe who is in the shot in the prompt: a RefMod has no tag." : "None yet: make one from pictures in the prompt bar, or from a video (its menu › Make a RefMod)."}</span>
       ${refmodDriveLine()}
     </div>`;
 }
@@ -1657,23 +1657,59 @@ function refmodDriveLine() {
     : `Google Drive › refmods: ${d.drive ?? "?"} file${d.drive === 1 ? "" : "s"} · on this pod: ${d.here ?? "?"}` + (d.fetched ? ` · ${d.fetched} fetched` : "");
   return `<span class="hint ${d.state === "error" ? "bad-hint" : ""}" title="${esc(d.folder ? "This pod's RefMods folder: " + d.folder : "")}">${esc(text)}${d.state === "syncing" ? "" : ` · <button class="link" data-act="refmodSync">Sync now</button>`}</span>`;
 }
-function openRefmodMaker() {
-  const pics = state.attached.map((id) => state.refs.find((r) => r.id === id)).filter(Boolean);
-  const box = $("refmodModal");
-  $("rmName").value = pics[0] ? pics[0].name.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) : "";
-  $("rmDesc").value = "";
-  $("rmPics").innerHTML = pics.length ? pics.map((r, i) => `<label class="rm-pic"><input type="checkbox" value="${r.id}" checked>
-      <img src="${r.img}" alt=""><span>Picture ${i + 1}</span></label>`).join("")
-    : `<p class="hint">Put the pictures in the prompt bar first (Add image), then make the RefMod from them.</p>`;
-  $("rmGo").disabled = !pics.length;
-  box.hidden = false;
-  setTimeout(() => $("rmName").focus(), 30);
+const RM_KIND_HINTS = {
+  identity: "Pictures of the person work best (a few angles). Full keeps the face better.",
+  clothing: "Pictures of the outfit, or clips of someone wearing it.",
+  style: "Clips or pictures in the style or look you want: colour, light, film grain, how it's shot. Compressed is enough.",
+  background: "Pictures or clips of the place.",
+  pose_motion: "Clips of the motion: a dance, a gesture, a camera move. It guides the motion; it won't replay it exactly.",
+  generic: "Pictures or clips of anything that should carry over: an effect, a mood, an object.",
+};
+function rmKindChanged() {
+  const kind = $("rmKind").value;
+  $("rmKindHint").textContent = RM_KIND_HINTS[kind] || "";
+  rmCheckReady();
 }
+function rmCheckReady() {
+  const pics = document.querySelectorAll("#rmPics input:checked").length, vids = document.querySelectorAll("#rmVids input:checked").length;
+  $("rmSecsRow").hidden = !vids;
+  $("rmGo").disabled = !pics && !vids;
+}
+function openRefmodMaker(videoId = null) {
+  const pics = state.attached.map((id) => state.refs.find((r) => r.id === id)).filter(Boolean);
+  const vids = state.clips.filter((c) => kindOf(c) === "video" && c.status === "done" && c.file);
+  const box = $("refmodModal");
+  const first = videoId ? clipById(videoId) : null;
+  $("rmName").value = first ? (first.prompt || String(first.imported || "clip").replace(/\.[^.]+$/, "")).replace(/[^A-Za-z0-9 _-]/g, "").trim().split(/\s+/).slice(0, 3).join("_").slice(0, 40)
+    : pics[0] ? pics[0].name.replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) : "";
+  $("rmDesc").value = "";
+  $("rmKind").value = first ? "style" : "identity";
+  $("rmPics").innerHTML = pics.length ? pics.map((r, i) => `<label class="rm-pic"><input type="checkbox" value="${r.id}" ${first ? "" : "checked"}>
+      <img src="${r.img}" alt=""><span>Picture ${i + 1}</span></label>`).join("")
+    : `<p class="hint">None in the prompt bar (Add image puts them there).</p>`;
+  const max = RM.videosMax || 8;
+  $("rmVids").innerHTML = vids.length ? vids.map((c) => `<label class="rm-pic" title="${esc(c.prompt || c.imported || "")}"><input type="checkbox" value="${c.id}" ${c.id === videoId ? "checked" : ""}>
+      <video src="${clipUrl(c)}#t=0.5" muted playsinline preload="metadata"></video><span>${esc(clipLabel(c))}</span></label>`).join("")
+    : `<p class="hint">No finished videos in the gallery yet. Import one from your computer with Import.</p>`;
+  $("rmVids").onchange = () => {
+    const on = document.querySelectorAll("#rmVids input:checked");
+    if (on.length > max) { on[on.length - 1].checked = false; say(`At most ${max} clips.`); }
+    rmCheckReady();
+  };
+  $("rmPics").onchange = rmCheckReady;
+  $("rmKind").onchange = rmKindChanged;
+  rmKindChanged();
+  box.hidden = false;
+  setTimeout(() => (first ? $("rmVids").querySelector("input:checked")?.scrollIntoView({ block: "nearest" }) : $("rmName").focus()), 30);
+}
+const clipLabel = (c) => (c.len ? Number(c.len).toFixed(1) + " s" : "Video") + (c.imported ? " · imported" : "");
 async function makeRefmod(replace = false) {
   const pictures = [...document.querySelectorAll("#rmPics input:checked")].map((x) => x.value);
-  const body = { name: $("rmName").value.trim(), pictures, mode: document.querySelector("input[name=rmMode]:checked").value,
-    concept: $("rmKind").value, desc: $("rmDesc").value.trim(), replace };
-  if (!pictures.length) { say("Pick at least one picture."); return; }
+  const videos = [...document.querySelectorAll("#rmVids input:checked")].map((x) => x.value);
+  const body = { name: $("rmName").value.trim(), pictures, videos, seconds: Number($("rmSecs").value) || 5,
+    mode: document.querySelector("input[name=rmMode]:checked").value, concept: $("rmKind").value, desc: $("rmDesc").value.trim(), replace };
+  if (!pictures.length && !videos.length) { say("Pick at least one picture or video clip."); return; }
+  if (body.concept === "pose_motion" && !videos.length) { say("A motion needs at least one video clip."); return; }
   try {
     const r = await api("POST", "refmods", body);
     RM.jobs = r.jobs;
@@ -1681,7 +1717,7 @@ async function makeRefmod(replace = false) {
     say(`Making the RefMod ${r.job.name}. It's in ComfyUI's queue; it'll be in the list when it's done.`);
     render();
   } catch (error) {
-    if (/already/.test(error.message) && !replace && (await askConfirm("Replace " + body.name + "?", error.message + " Make it again from these pictures?", "Replace"))) return makeRefmod(true);
+    if (/already/.test(error.message) && !replace && (await askConfirm("Replace " + body.name + "?", error.message + " Make it again from these?", "Replace"))) return makeRefmod(true);
     say(error.message);
   }
 }
@@ -2702,6 +2738,7 @@ function openMenu(id, x, y) {
       : `<button role="menuitem" data-act="menuAddToEdit" ${c.status === "done" && c.file ? "" : 'aria-disabled="true" class="off"'}>${ICON.edit}Add to edit</button>`) : ""}${kindOf(c) === "video" ? `
     <button role="menuitem" data-act="menuUseMotion" ${c.status === "done" && c.file ? "" : 'aria-disabled="true" class="off"'} title="Make a new video with this one's motion: your pictures and prompt say who performs it">${ICON.swap}Use its motion</button>
     <button role="menuitem" data-act="menuSwap" ${c.status === "done" && c.file ? "" : 'aria-disabled="true" class="off"'} title="Put the person from a picture into this video, with its motion and sound">${ICON.swap}Swap character…</button>
+    <button role="menuitem" data-act="menuRefmod" ${c.status === "done" && c.file && RM.installed ? "" : 'aria-disabled="true" class="off"'} title="${RM.installed ? "Save this video's style, look or motion as a RefMod, to use in other videos" : "RefMods need the ComfyUI-MiniMaxH3Mod node pack: on RunPod, set ENABLE_REFMOD=true."}">${ICON.plus}Make a RefMod from it…</button>
     <button role="menuitem" data-act="menuFaces" ${c.status === "done" && c.file ? "" : 'aria-disabled="true" class="off"'} title="${esc(FACES.why || "Re-render small faces up close and put them back, as a new clip")}">${ICON.face}Refine faces…</button>` : ""}
 ${plainVideo(c) ? "" : `
     <button role="menuitem" data-act="menuReuse">${ICON.reuse}Use this prompt and settings</button>`}
@@ -3286,6 +3323,7 @@ const ACT = {
   openModels: () => { showAppMenu(false); openModels(); },
   openBuilder: () => { ACT.closePopups?.(); openBuilder(); },
   makeRefmod: () => openRefmodMaker(),
+  menuRefmod: () => { const c = motionSource(closeMenu()); if (c) openRefmodMaker(c.id); },
   refmodSync: () => { RM.drive = { ...RM.drive, state: "syncing" }; render(); loadRefmods(true); },
   rmGo: () => makeRefmod(),
   rmClose: () => { $("refmodModal").hidden = true; },

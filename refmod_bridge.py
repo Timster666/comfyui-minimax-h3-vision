@@ -1,7 +1,7 @@
 """RefMods for the Video tab, with Luisa's ComfyUI-MiniMaxH3Mod pack (https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod).
 
-A RefMod is a reference saved as a small file: pictures of a person (or clothes, a style...) encoded once with the H3
-video VAE, no training. A render can then carry up to eight, each with a strength, on top of its prompt and pictures:
+A RefMod is a reference saved as a small file: pictures of a person (or clothes, a style...), or video clips of a style,
+a look or a motion, encoded once with the H3 video VAE, no training. A render can then carry up to eight, each with a strength, on top of its prompt and pictures:
 "Load H3 RefMods" reads them and "Apply H3 RefMod" adds them to the conditioning H3 samples with. They have no tag in
 the prompt: the prompt describes who is there.
 
@@ -24,8 +24,15 @@ LOADER_NODE, APPLY_NODE = "172", "173"
 # How a RefMod keeps its pictures: pooled down (quick to render with), or the whole encode (more detail, slower).
 MODES = {"compressed": {"mode": "Compressed Reference", "extraction_preset": "manual", "max_tokens": 5120},
          "full": {"mode": "Full Reference", "extraction_preset": "identity_encode", "max_tokens": 8192}}
-CONCEPTS = ["identity", "clothing", "style", "background", "generic"]
+CONCEPTS = ["identity", "clothing", "style", "background", "pose_motion", "generic"]
 PICTURES_MAX = 16
+VIDEOS_MAX = 8
+# Video clips: read at 24 fps, small (the pack brings them down to ref_resolution anyway), and only their first seconds.
+VIDEO_MEGAPIXELS = 0.4
+SECONDS = (2, 10)
+# The pack's presets for what a video RefMod holds (Compressed only): a style or a look pooled to a small grid; a
+# motion kept as an ordered sequence of frames.
+VIDEO_PRESETS = {"style": "style_experimental", "pose_motion": "motion_sequence"}
 
 
 def installed():
@@ -91,10 +98,11 @@ def safe_name(text):
     return name
 
 
-def make_graph(name, pictures, vae, mode="compressed", concept="identity", description=""):
-    """The graph that makes a RefMod from pictures (paths ComfyUI can load) with the pack's Create H3 RefMod."""
-    if not pictures:
-        raise ValueError("Pick the pictures to make the RefMod from.")
+def make_graph(name, pictures, vae, mode="compressed", concept="identity", description="", videos=(), seconds=5):
+    """The graph that makes a RefMod from pictures and video clips (paths ComfyUI can load; the videos' inside the
+    output folder) with the pack's Create H3 RefMod."""
+    if not pictures and not videos:
+        raise ValueError("Pick the pictures or video clips to make the RefMod from.")
     if mode not in MODES:
         raise ValueError("Unknown RefMod mode.")
     if concept not in CONCEPTS:
@@ -110,6 +118,21 @@ def make_graph(name, pictures, vae, mode="compressed", concept="identity", descr
         node = str(10 + n)
         graph[node] = {"class_type": "MMVisionLoadStill", "inputs": {"file": path}}
         extract["refs_image.ref_image_%d" % n] = [node, 0]
+    if videos:
+        seconds = min(SECONDS[1], max(SECONDS[0], float(seconds or 5)))
+        for n, path in enumerate(list(videos)[:VIDEOS_MAX]):
+            node = str(40 + n)
+            graph[node] = {"class_type": "MMVisionLoadGuide", "inputs": {"file": path, "megapixels": VIDEO_MEGAPIXELS,
+                                                                         "max_frames": int(seconds * 24) + 5}}
+            extract["refs_video.ref_video_%d" % n] = [node, 0]
+        # A clip's frames: 512 px on the short side is plenty for a look or a motion, and keeps the encode quick.
+        extract["ref_resolution"] = 512
+        if mode == "compressed":
+            extract["extraction_preset"] = VIDEO_PRESETS.get(concept, "manual")
+        else:
+            # Full keeps the clip's encode, frames up to the token budget (the pack drops near-duplicates first).
+            extract["extraction_preset"] = "manual"
+            extract["latent_frames"] = 39
     graph["2"] = {"class_type": EXTRACT, "inputs": extract}
     return graph
 
