@@ -98,7 +98,8 @@ def safe_name(text):
     return name
 
 
-def make_graph(name, pictures, vae, mode="compressed", concept="identity", description="", videos=(), seconds=5):
+def make_graph(name, pictures, vae, mode="compressed", concept="identity", description="", videos=(), seconds=5,
+               merge=False, motion_only=False):
     """The graph that makes a RefMod from pictures and video clips (paths ComfyUI can load; the videos' inside the
     output folder) with the pack's Create H3 RefMod."""
     if not pictures and not videos:
@@ -133,6 +134,19 @@ def make_graph(name, pictures, vae, mode="compressed", concept="identity", descr
             # Full keeps the clip's encode, frames up to the token budget (the pack drops near-duplicates first).
             extract["extraction_preset"] = "manual"
             extract["latent_frames"] = 39
+    motion_only = bool(motion_only) and bool(videos) and concept == "pose_motion"
+    if merge or motion_only:
+        # Merge: one shared reference refined against every picture and clip at once, so it holds what they have in
+        # common at one reference's size. Only the movement: clips turned into frame-to-frame differences first, so
+        # how things look stays out. The pack does both in Compressed only, and its presets switch them off, so the
+        # presets' settings are set by hand: a style's small 8x8 grid, 16x16 otherwise.
+        if mode != "compressed":
+            raise ValueError("Merge and Only the movement work with Compressed only.")
+        if merge and len(pictures) + len(videos) < 2:
+            raise ValueError("Merge needs at least two pictures or clips.")
+        small = concept == "style"
+        extract.update({"extraction_preset": "manual", "pool_h": 8 if small else 16, "pool_w": 8 if small else 16,
+                        "identity": 150 if small else 300, "merge": bool(merge), "motion_only": motion_only})
     graph["2"] = {"class_type": EXTRACT, "inputs": extract}
     return graph
 

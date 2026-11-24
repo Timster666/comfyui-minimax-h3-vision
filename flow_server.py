@@ -424,7 +424,7 @@ def refmod_made(job):
 
 async def refmods(request):
     """GET: whether the pack is there, the RefMods, and those being made. POST {name, pictures, videos, seconds, mode,
-    concept, desc, replace}: make one from pictures in Add image and video clips in the gallery."""
+    concept, desc, merge, motionOnly, replace}: make one from pictures in Add image and video clips in the gallery."""
     maker = refmod_bridge.MAKER
     maker.on_done = refmod_made
     copy = refmod_bridge.DRIVE_COPY
@@ -457,7 +457,8 @@ async def refmods(request):
         if not found.get("vae"):
             raise ValueError("Making a RefMod needs MiniMax H3's video VAE (minimax_h3_video_vae_fp16.safetensors in models/vae).")
         graph = refmod_bridge.make_graph(name, pictures, found["vae"], body.get("mode") or "compressed",
-                                         body.get("concept") or "identity", body.get("desc") or "", videos, body.get("seconds") or 5)
+                                         body.get("concept") or "identity", body.get("desc") or "", videos, body.get("seconds") or 5,
+                                         bool(body.get("merge")), bool(body.get("motionOnly")))
         job = await maker.make(name, graph)
     except ValueError as error:
         raise web.HTTPBadRequest(text=str(error))

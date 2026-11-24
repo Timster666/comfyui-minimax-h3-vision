@@ -1662,7 +1662,7 @@ const RM_KIND_HINTS = {
   clothing: "Pictures of the outfit, or clips of someone wearing it.",
   style: "Clips or pictures in the style or look you want: colour, light, film grain, how it's shot. Compressed is enough.",
   background: "Pictures or clips of the place.",
-  pose_motion: "Clips of the motion: a dance, a gesture, a camera move. It guides the motion; it won't replay it exactly.",
+  pose_motion: "Clips of the motion: a dance, a gesture, a camera move. For a move like waving, give 2 to 4 clips of different people doing it, and merge them. It guides the motion; it won't replay it exactly.",
   generic: "Pictures or clips of anything that should carry over: an effect, a mood, an object.",
 };
 function rmKindChanged() {
@@ -1673,6 +1673,11 @@ function rmKindChanged() {
 function rmCheckReady() {
   const pics = document.querySelectorAll("#rmPics input:checked").length, vids = document.querySelectorAll("#rmVids input:checked").length;
   $("rmSecsRow").hidden = !vids;
+  // Merge and Only the movement are Compressed only: Full keeps each encode as it is.
+  const compressed = document.querySelector("input[name=rmMode]:checked")?.value === "compressed";
+  $("rmMergeRow").hidden = !(compressed && pics + vids > 1);
+  $("rmMotionOnlyRow").hidden = !(compressed && vids && $("rmKind").value === "pose_motion");
+  $("rmMergeBox").hidden = $("rmMergeRow").hidden && $("rmMotionOnlyRow").hidden;
   $("rmGo").disabled = !pics && !vids;
 }
 function openRefmodMaker(videoId = null) {
@@ -1698,6 +1703,8 @@ function openRefmodMaker(videoId = null) {
   };
   $("rmPics").onchange = rmCheckReady;
   $("rmKind").onchange = rmKindChanged;
+  document.querySelectorAll("input[name=rmMode]").forEach((x) => { x.onchange = rmCheckReady; });
+  $("rmMerge").checked = false; $("rmMotionOnly").checked = false;
   rmKindChanged();
   box.hidden = false;
   setTimeout(() => (first ? $("rmVids").querySelector("input:checked")?.scrollIntoView({ block: "nearest" }) : $("rmName").focus()), 30);
@@ -1707,7 +1714,8 @@ async function makeRefmod(replace = false) {
   const pictures = [...document.querySelectorAll("#rmPics input:checked")].map((x) => x.value);
   const videos = [...document.querySelectorAll("#rmVids input:checked")].map((x) => x.value);
   const body = { name: $("rmName").value.trim(), pictures, videos, seconds: Number($("rmSecs").value) || 5,
-    mode: document.querySelector("input[name=rmMode]:checked").value, concept: $("rmKind").value, desc: $("rmDesc").value.trim(), replace };
+    mode: document.querySelector("input[name=rmMode]:checked").value, concept: $("rmKind").value, desc: $("rmDesc").value.trim(), replace,
+    merge: !$("rmMergeRow").hidden && $("rmMerge").checked, motionOnly: !$("rmMotionOnlyRow").hidden && $("rmMotionOnly").checked };
   if (!pictures.length && !videos.length) { say("Pick at least one picture or video clip."); return; }
   if (body.concept === "pose_motion" && !videos.length) { say("A motion needs at least one video clip."); return; }
   try {
