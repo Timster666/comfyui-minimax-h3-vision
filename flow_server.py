@@ -423,8 +423,8 @@ def refmod_made(job):
 
 
 async def refmods(request):
-    """GET: whether the pack is there, the RefMods, and those being made. POST {name, pictures, mode, concept, desc,
-    replace}: make one from pictures in Add image."""
+    """GET: whether the pack is there, the RefMods, and those being made. POST {name, pictures, videos, seconds, mode,
+    concept, desc, replace}: make one from pictures in Add image and video clips in the gallery."""
     maker = refmod_bridge.MAKER
     maker.on_done = refmod_made
     copy = refmod_bridge.DRIVE_COPY
@@ -436,6 +436,7 @@ async def refmods(request):
             copy.start()
         return web.json_response({"installed": have is not None, "files": have or [], "jobs": maker.status(),
                                   "modes": list(refmod_bridge.MODES), "concepts": refmod_bridge.CONCEPTS,
+                                  "seconds": refmod_bridge.SECONDS, "videosMax": refmod_bridge.VIDEOS_MAX,
                                   "drive": copy.view()})
     if have is None:
         raise web.HTTPBadRequest(text="Making a RefMod needs the ComfyUI-MiniMaxH3Mod node pack. On RunPod: set ENABLE_REFMOD=true.")
@@ -445,13 +446,18 @@ async def refmods(request):
         if name in have and not body.get("replace"):
             raise web.HTTPConflict(text="There's a RefMod called %s already." % name)
         async with _lock:
-            by_id = {i["id"]: i for i in read_project()["images"]}
+            data = read_project()
+        by_id = {i["id"]: i for i in data["images"]}
         pictures = ["%s/images/%s" % (ROOT, by_id[i]["file"]) for i in body.get("pictures") or [] if i in by_id]
+        clips = {c["id"]: c for c in data["clips"] if c.get("kind", "video") == "video" and c.get("status") == "done" and c.get("file")}
+        videos = ["%s/%s" % (clips[i].get("subfolder") or ROOT + "/clips", clips[i]["file"]) for i in body.get("videos") or [] if i in clips]
+        if body.get("videos") and not videos:
+            raise ValueError("Those videos aren't in the gallery any more.")
         found, missing = h3_graph.encoders(h3_graph.available())
         if not found.get("vae"):
             raise ValueError("Making a RefMod needs MiniMax H3's video VAE (minimax_h3_video_vae_fp16.safetensors in models/vae).")
         graph = refmod_bridge.make_graph(name, pictures, found["vae"], body.get("mode") or "compressed",
-                                         body.get("concept") or "identity", body.get("desc") or "")
+                                         body.get("concept") or "identity", body.get("desc") or "", videos, body.get("seconds") or 5)
         job = await maker.make(name, graph)
     except ValueError as error:
         raise web.HTTPBadRequest(text=str(error))
