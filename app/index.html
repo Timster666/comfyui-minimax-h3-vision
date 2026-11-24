@@ -992,6 +992,9 @@ body.dragging-ref .composer { border-color: var(--line-strong); }
       <div class="rm-field"><span class="label">From these pictures (the prompt bar's)</span><div class="rm-pics" id="rmPics"></div></div>
       <div class="rm-field"><span class="label">And these video clips (the gallery's)</span><div class="rm-pics rm-vids" id="rmVids"></div>
         <label class="rm-secs" id="rmSecsRow"><span class="hint">Use the first</span><input type="number" id="rmSecs" min="2" max="10" step="1" value="5"><span class="hint">seconds of each clip</span></label></div>
+      <div class="rm-field" id="rmMergeBox">
+        <label class="rm-mode" id="rmMergeRow"><input type="checkbox" id="rmMerge"> <span><b>Merge them into one</b> · keeps what they have in common (the style, the move), not each one's own content. Stays small however many you add.</span></label>
+        <label class="rm-mode" id="rmMotionOnlyRow"><input type="checkbox" id="rmMotionOnly"> <span><b>Only the movement</b> · leaves out how the people and places look (experimental)</span></label></div>
       <div class="rm-field"><span class="label">How much it keeps</span>
         <label class="rm-mode"><input type="radio" name="rmMode" value="compressed" checked> <b>Compressed</b> · quick to render with</label>
         <label class="rm-mode"><input type="radio" name="rmMode" value="full"> <b>Full</b> · keeps more detail, makes renders several times slower</label></div>
