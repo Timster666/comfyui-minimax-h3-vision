@@ -1,16 +1,27 @@
 // Adds a "MiniMax H3 Vision" button to ComfyUI's sidebar. It opens the app full screen
 // over ComfyUI; the app's own Close button (or Esc on an empty screen) closes it again.
-// It also opens by itself the first time ComfyUI loads in a browser tab (a reload doesn't open it again),
-// unless "Open MiniMax H3 Vision when ComfyUI opens" is switched off in ComfyUI's settings.
+// It also opens by itself the first time ComfyUI loads in a browser tab, unless "Open MiniMax H3 Vision when ComfyUI
+// opens" is switched off in ComfyUI's settings. A reload opens it again if it was open, and leaves it closed if not.
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
 
 const FRAME_ID = "mmflow-frame";
 const OPEN_ON_START = "MiniMaxFlow.OpenOnStart";
 const OPENED_KEY = "mmvision.opened-on-start";   // in sessionStorage: once per browser tab
+const OPEN_KEY = "mmvision.open";                 // in sessionStorage: open in this tab now, so a reload reopens it
+
+function remember(open) {
+  try {
+    if (open) sessionStorage.setItem(OPEN_KEY, "1");
+    else sessionStorage.removeItem(OPEN_KEY);
+  } catch {
+    // No sessionStorage: a reload goes to ComfyUI.
+  }
+}
 
 function closeFlow() {
   document.getElementById(FRAME_ID)?.remove();
+  remember(false);
 }
 
 function openFlow() {
@@ -23,6 +34,7 @@ function openFlow() {
   frame.allow = "fullscreen; clipboard-write";
   frame.style.cssText = "position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:10000;background:#121316";
   document.body.appendChild(frame);
+  remember(true);
 }
 
 // Clip updates go to every window; this keeps the graph page from logging them as unknown.
@@ -43,6 +55,7 @@ function setting(id, fallback) {
 
 function openOnStart() {
   try {
+    if (sessionStorage.getItem(OPEN_KEY)) { openFlow(); return; }
     if (sessionStorage.getItem(OPENED_KEY)) return;
     sessionStorage.setItem(OPENED_KEY, "1");
   } catch {
