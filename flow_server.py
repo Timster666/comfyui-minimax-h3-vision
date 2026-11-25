@@ -2025,8 +2025,42 @@ ROUTES = (
 )
 
 
+# ComfyUI's loading screen (its own page's splash-loader) with Vision's mark and name in place of ComfyUI's logo: the
+# page Vision opens over. The rest of ComfyUI's page is left as it is.
+SPLASH = (
+    '<div class="mmv-splash" style="display:flex;flex-direction:column;align-items:center;gap:18px">'
+    '<svg viewBox="0 0 64 64" style="width:64px;height:64px" fill="none" aria-hidden="true">'
+    '<circle cx="32" cy="32" r="27" stroke="#e0a24a" stroke-width="3" opacity=".35"/>'
+    '<path d="M32 5a27 27 0 0 1 27 27" stroke="#e0a24a" stroke-width="3" stroke-linecap="round">'
+    '<animateTransform attributeName="transform" type="rotate" from="0 32 32" to="360 32 32" dur="1.1s" repeatCount="indefinite"/></path>'
+    '<path d="M14 32s7-11 18-11 18 11 18 11-7 11-18 11-18-11-18-11z" stroke="#ececee" stroke-width="2.4" stroke-linejoin="round"/>'
+    '<circle cx="32" cy="32" r="5" fill="#e0a24a"/></svg>'
+    '<div style="font:600 17px system-ui,-apple-system,Segoe UI,sans-serif;color:#ececee;letter-spacing:.01em">MiniMax H3 Vision</div>'
+    '</div>')
+SPLASH_AT = re.compile(r'(<div id="splash-loader"[^>]*?)aria-label="[^"]*"([^>]*>)\s*<svg.*?</svg>', re.S)
+
+
+@web.middleware
+async def vision_splash(request, handler):
+    if request.method == "GET" and request.path in ("/", "/index.html"):
+        from server import PromptServer
+        try:
+            with open(os.path.join(PromptServer.instance.web_root, "index.html"), encoding="utf-8") as f:
+                page, n = SPLASH_AT.subn(lambda m: m.group(1) + 'aria-label="Loading MiniMax H3 Vision"' + m.group(2) + SPLASH, f.read(), 1)
+        except OSError:
+            n = 0
+        if n:
+            page = page.replace("#splash-loader{", "#splash-loader{background:#121316;", 1)
+            return web.Response(text=page, content_type="text/html",
+                                headers={"Cache-Control": "no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"})
+        # A ComfyUI page without the splash this knows: its own.
+    return await handler(request)
+
+
 def install():
     from server import PromptServer
+
+    PromptServer.instance.app.middlewares.append(vision_splash)
 
     try:
         model_store.register_custom()   # video models added from a link on the Models page
