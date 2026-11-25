@@ -22,6 +22,7 @@ import math
 import os
 import random
 import re
+import sys
 import shutil
 import time
 import uuid
@@ -468,6 +469,25 @@ async def refmods(request):
         LOG.exception("MiniMax H3 Vision couldn't make a RefMod")
         raise web.HTTPBadRequest(text="ComfyUI refused it: %s" % error)
     return web.json_response({"job": job, "jobs": maker.status()})
+
+
+async def restart_comfy(request):
+    """POST {force}: restart ComfyUI in place, as ComfyUI-Manager's Restart does (the same process, so a pod whose
+    start script ends by running ComfyUI keeps running). Refused with the queue's count while it's busy, unless forced."""
+    from server import PromptServer
+    running, pending = PromptServer.instance.prompt_queue.get_current_queue()
+    busy = len(running) + len(pending)
+    if busy and not (await request.json()).get("force"):
+        return web.json_response({"busy": busy}, status=409)
+
+    def again():
+        LOG.info("MiniMax H3 Vision: restarting ComfyUI")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+    # After the answer has gone out.
+    asyncio.get_running_loop().call_later(0.5, again)
+    return web.json_response({"restarting": True})
 
 
 async def models_token(request):
@@ -1975,6 +1995,7 @@ ROUTES = (
     ("POST", "/mmflow/api/lora-links", lora_links),
     ("POST", "/mmflow/api/lora-links/{id}/cancel", lora_links),
     ("POST", "/mmflow/api/models/add", add_model),
+    ("POST", "/mmflow/api/restart", restart_comfy),
     ("POST", "/mmflow/api/models/{id}/{action}", models_action),
     ("POST", "/mmflow/api/images/from-clip", image_from_clip),
     ("PATCH", "/mmflow/api/images/{id}", rename_image),

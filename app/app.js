@@ -1730,6 +1730,39 @@ async function makeRefmod(replace = false) {
   }
 }
 
+// Restart ComfyUI from here: it restarts in place (like ComfyUI-Manager's Restart), and this page reloads when it's back,
+// so new browser files load too.
+async function restartComfy(force = false) {
+  if (!force && !(await askConfirm("Restart ComfyUI?", "It takes about half a minute; this page comes back by itself when it's up again.", "Restart"))) return;
+  let r;
+  try {
+    r = await fetch("/mmflow/api/restart", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ force }) });
+  } catch { say("Couldn't reach ComfyUI."); return; }
+  if (r.status === 409) {
+    const { busy } = await r.json();
+    if (await askConfirm("Stop the queue and restart?", `${busy} render${busy === 1 ? " is" : "s are"} running or waiting: ${busy === 1 ? "it's" : "they're"} lost if ComfyUI restarts now.`, "Restart anyway", true)) restartComfy(true);
+    return;
+  }
+  if (!r.ok) { say("Couldn't restart ComfyUI: " + (await r.text())); return; }
+  const scrim = document.createElement("div");
+  scrim.className = "restart-scrim";
+  scrim.innerHTML = `<div class="restart-box" role="status" aria-live="polite"><b>Restarting ComfyUI…</b><span class="hint" id="restartText">Waiting for it to stop.</span></div>`;
+  document.body.append(scrim);
+  // First wait until it's gone (or 10 s have passed), then until it answers again.
+  const started = Date.now();
+  let down = false;
+  for (;;) {
+    await new Promise((done) => setTimeout(done, 1500));
+    let up = false;
+    try { up = (await fetch("/mmflow/api/models", { cache: "no-store" })).ok; } catch {}
+    if (!up && !down) { down = true; $("restartText").textContent = "Starting again: loading the custom nodes."; }
+    if (up && (down || Date.now() - started > 10000)) break;
+    if (Date.now() - started > 600000) { $("restartText").textContent = "It's taking long: check the pod's log, then reload this page."; return; }
+  }
+  $("restartText").textContent = "Back. Reloading…";
+  location.reload();
+}
+
 // Refine faces (ComfyUI-H3-FaceRefine): a finished video's faces re-rendered up close and put back, as a new clip.
 const FACES = { why: null, models: [], clip: null, face: null };
 async function loadFaces() {
@@ -3357,6 +3390,7 @@ const ACT = {
     catch (error) { say(error.message); }
   },
   openDrive: () => { showAppMenu(false); openDrive(); },
+  restartComfy: () => { showAppMenu(false); restartComfy(); },
   closeDrive: () => closeDrive(),
   driveRefresh: () => driveFiles(true),
   driveOpen: async (name) => {
