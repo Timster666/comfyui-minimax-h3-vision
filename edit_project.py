@@ -5,8 +5,9 @@ A project zip holds:
                     "edit": {name, ratio, muted, pieces: [{id, clip, in, out}]},
                     "clips": [the clip records (prompt and settings), each with "zip_file"]}
     clips/<file>   each video the timeline uses, whole, so it can be trimmed differently later
-    images/<file>  the reference pictures those videos' prompts name (@name), listed in "images"
-                   with their names, so the prompts still find them after an import
+    images/<file>  the reference pictures and videos those videos used, listed in "images" with their
+                   names, so the prompts still find them after an import
+The videos a video was made from (Motion from…, Swap, Refine faces) go in too, as videos of their own.
 
 A single video's zip is the same with "kind": "clip" and no "edit": one video and its reference pictures.
 
@@ -27,7 +28,9 @@ VERSION = 1
 CLIP_FIELDS = ("id", "kind", "prompt", "model", "profile", "steps", "cfg", "res", "aspect", "len", "width", "height",
                "seed", "loras", "starred", "created", "imported", "found", "refs", "sampler", "scheduler", "negative",
                "pictures", "refmods", "faces", "realism", "swap", "motion")
-IMAGE_FIELDS = ("id", "name", "file", "added")
+IMAGE_FIELDS = ("id", "name", "file", "added", "kind", "seconds", "width", "height", "audio")
+# A clip's fields that name the video it was made from.
+SOURCE_FIELDS = ("motion", "swap", "faces")
 MENTION = re.compile(r"@([A-Za-z0-9_]+)")
 
 
@@ -65,11 +68,19 @@ def _unique(name, taken):
     return name
 
 
+def sources_of(clip):
+    return [clip[k]["from"] for k in SOURCE_FIELDS if isinstance(clip.get(k), dict) and clip[k].get("from")]
+
+
 def _write(out_path, used, clips, clip_path, images, image_path, head):
-    """Write the videos (ids in used), their reference pictures and project.json to out_path.
+    """Write the videos (ids in used), the videos they were made from, their reference pictures and project.json
+    to out_path.
 
     head(ids of the videos that went in) gives project.json's other fields.
     """
+    used = list(used)
+    for clip_id in used:   # grows as it goes: a source's own source goes in too
+        used += [s for s in sources_of(clips[clip_id]) if s in clips and s not in used]
     records, names = [], set()
     temp = out_path + ".part"
     try:
@@ -130,11 +141,12 @@ def pack(edit, clips, clip_path, out_path, images=(), image_path=None):
     return {"clips": len(project["clips"]), "pieces": len(project["edit"]["pieces"]), "images": len(project["images"])}
 
 
-def pack_clip(clip, clip_path, out_path, images=(), image_path=None):
-    """Write one video and its reference pictures to out_path (a .zip)."""
+def pack_clip(clip, clip_path, out_path, images=(), image_path=None, clips=None):
+    """Write one video, the videos it was made from (from clips: id -> clip record) and its references to out_path."""
     if not os.path.exists(clip_path(clip)):
         raise Bad("This video's file isn't there any more.")
-    project = _write(out_path, [clip["id"]], {clip["id"]: clip}, clip_path, images, image_path, lambda kept: {"kind": CLIP_KIND})
+    project = _write(out_path, [clip["id"]], dict(clips or {}, **{clip["id"]: clip}), clip_path, images, image_path,
+                     lambda kept: {"kind": CLIP_KIND})
     return {"clips": len(project["clips"]), "images": len(project["images"])}
 
 
@@ -190,7 +202,8 @@ def unpack_images(z, project, images, images_dir, image_path, ids=None):
         while name in taken:
             name, n = "%s%d" % (base, n), n + 1
         taken.add(name)
-        image = {"id": image_id, "name": name, "file": file, "added": record.get("added") or 0}
+        image = {"id": image_id, "name": name, "file": file, "added": record.get("added") or 0,
+                 **{k: record[k] for k in ("kind", "seconds", "width", "height", "audio") if k in record}}
         by_id[image_id] = image
         names[record["name"].lower()] = name
         if ids is not None:
@@ -243,7 +256,7 @@ def unpack(zip_path, existing, clips_dir, clip_path, images=(), images_dir=None,
                 for p in clip["pictures"]:
                     image = image_ids.get(p.get("id")) or here.get(p.get("id")) or pictures.get(names.get(str(p.get("name")).lower(), "").lower())
                     if image:
-                        kept.append({"id": image["id"], "name": image["name"]})
+                        kept.append({"id": image["id"], "name": image["name"], **({"kind": "video"} if image.get("kind") == "video" else {})})
                 clip["pictures"] = clip["refs"] = kept
             else:
                 clip["refs"] = [{"id": pictures[n.lower()]["id"], "name": pictures[n.lower()]["name"]}
@@ -252,6 +265,11 @@ def unpack(zip_path, existing, clips_dir, clip_path, images=(), images_dir=None,
             ids[record["id"]] = clip_id
             existing = dict(existing, **{clip_id: clip})
             added.append(clip)
+    # The videos they were made from may have a new id here.
+    for clip in added:
+        for k in SOURCE_FIELDS:
+            if isinstance(clip.get(k), dict) and clip[k].get("from") in ids:
+                clip[k] = dict(clip[k], **{"from": ids[clip[k]["from"]]})
     if project.get("kind") == CLIP_KIND:
         return None, added, same, new_images, same_images
     edit = project.get("edit") or {}
