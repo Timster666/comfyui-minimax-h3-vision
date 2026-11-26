@@ -649,25 +649,6 @@ function renderPrunaBar() {
     ${row("Close-ups", ["hands", "feet"])}`;
 }
 
-// A reference video in the prompt bar plays, with its sound, while the pointer is on it. A browser allows sound only
-// after a click on the page; until then it plays muted.
-$("refs").addEventListener("mouseover", (e) => {
-  const pic = e.target.closest("[data-hover-video]");
-  if (!pic || pic.querySelector("video")) return;
-  const v = document.createElement("video");
-  v.className = "ref-hover";
-  v.src = pic.dataset.hoverVideo;
-  v.playsInline = true;
-  v.loop = true;
-  pic.append(v);
-  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-});
-$("refs").addEventListener("mouseout", (e) => {
-  const pic = e.target.closest("[data-hover-video]");
-  if (!pic || pic.contains(e.relatedTarget)) return;
-  pic.querySelector("video.ref-hover")?.remove();
-});
-
 function renderRefs() {
   renderNegative();
   renderPrunaBar();
@@ -4617,13 +4598,19 @@ async function load(first = true) {
 }
 
 
-// Hovering an image in the prompt bar shows it bigger, above it.
+// Hovering an image in the prompt bar shows it bigger, above it. A reference video plays there, looping, with its
+// sound (a browser allows sound only after a click on the page; until then it plays muted).
 const peek = document.createElement("div");
 peek.className = "ref-peek";
 peek.hidden = true;
-peek.innerHTML = '<img alt="">';
+peek.innerHTML = '<img alt=""><video playsinline loop hidden></video>';
 document.body.appendChild(peek);
-const hidePeek = () => { peek.hidden = true; };
+const peekVideo = peek.querySelector("video");
+const hidePeek = () => {
+  peek.hidden = true;
+  if (peekVideo.getAttribute("src")) { peekVideo.pause(); peekVideo.removeAttribute("src"); peekVideo.load(); }
+  peekVideo.hidden = true;
+};
 document.addEventListener("mouseover", (e) => {
   const pic = e.target.closest?.(".ref-pic");
   if (!pic || e.target.closest(".ref-x") || e.buttons) { if (!e.target.closest?.(".ref-peek")) hidePeek(); return; }
@@ -4640,6 +4627,15 @@ document.addEventListener("mouseover", (e) => {
     peek.style.left = Math.max(12, Math.min(innerWidth - w - 12, box.left + box.width / 2 - w / 2)) + "px";
     peek.style.top = box.top - w / ratio - 12 + "px";
     peek.hidden = false;
+    const video = pic.dataset.hoverVideo;
+    if (video && peekVideo.getAttribute("src") !== video) {
+      peekVideo.src = video;
+      peekVideo.muted = false;
+      peekVideo.hidden = false;
+      peekVideo.play().catch(() => { peekVideo.muted = true; peekVideo.play().catch(() => {}); });
+    } else if (!video && peekVideo.getAttribute("src")) {
+      peekVideo.pause(); peekVideo.removeAttribute("src"); peekVideo.load(); peekVideo.hidden = true;
+    }
   };
   if (img.getAttribute("src") !== src) { img.onload = place; img.src = src; if (img.complete && img.naturalWidth) place(); }
   else place();

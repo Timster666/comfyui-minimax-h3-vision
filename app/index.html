@@ -128,10 +128,10 @@ body.library-open .refs { position: relative; z-index: 6; }
 .ref-peek { position: fixed; z-index: 60; border-radius: 12px; overflow: hidden; background: var(--panel, #16181d); border: 1px solid var(--line); box-shadow: 0 16px 40px rgba(0,0,0,.55); pointer-events: none; }
 .ref-peek[hidden] { display: none; }
 .ref-peek img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.ref-peek video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+.ref-peek video[hidden] { display: none; }
 #pv { cursor: pointer; }
 .ref-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.ref-hover { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-.ref-pic .ref-video, .ref-pic .ref-x { z-index: 1; }
 .ref-video { position: absolute; left: 4px; bottom: 4px; display: flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; font-size: 10.5px; pointer-events: none; }
 .ref-video svg { width: 9px; height: 9px; }
 .lib-sound { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-weight: 600; font-size: 13px; cursor: pointer; }
