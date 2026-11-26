@@ -395,8 +395,9 @@ def build_graph(clip, images, files=None, name=None):
             graph[node] = {"class_type": "MMVisionLoadGuide", "inputs": {
                 "file": "%s/images/%s" % (ROOT, video["file"]), "megapixels": 1.0, "max_frames": REF_VIDEO_FRAMES}}
             graph["10"]["inputs"]["ref_videos.ref_video_%s" % index] = [node, 0]
-            # Unless it's switched off for that video: then H3 makes the sound itself, from the prompt.
-            if video.get("audio") and video.get("sound", True):
+            # Only when Use its sound is on for that video (off by default): otherwise H3 makes the sound itself,
+            # from the prompt.
+            if video.get("audio") and video.get("sound"):
                 graph["10"]["inputs"]["ref_video_audios.ref_video_audio_%s" % index] = [node, 1]
     if is_hyperflow(unet):
         # Few-step and CFG-free, on its own two-time schedule.
