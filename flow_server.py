@@ -845,6 +845,8 @@ async def generate(request):
             clip["pictures"] = pictures
         if refmods:
             clip["refmods"] = refmods
+        if s.get("sound") is False:
+            clip["silent"] = True
         realism = s.get("realism") or {}
         if realism.get("on") and h3_graph.realism_lora():
             low, high = h3_graph.REALISM["range"]
@@ -905,6 +907,9 @@ async def generate(request):
                 clip["prompt"] = sent if isinstance(sent, str) else graph[str(swap.FILL_NODE)]["inputs"]["string"]
         else:
             graph = h3_graph.build_graph(clip, images, name=clip_info.file_stem(clip))
+        if clip.get("silent"):
+            # Saved without sound: H3 still makes its audio with the picture, it just isn't kept.
+            graph["18"]["inputs"].pop("audio", None)
         clip["prompt_id"] = await queue(graph, clip_info.extra_data(clip), body.get("client_id"))
     except h3_graph.Missing as error:
         raise web.HTTPBadRequest(text=str(error))

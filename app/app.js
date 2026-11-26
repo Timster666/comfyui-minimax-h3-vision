@@ -320,9 +320,9 @@ function summary() {
   if (!isImage() && state.motion && motionSource(state.motion))
     return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? model + " (can't do Motion: pick another model)" : model,
       ...(state.motionTurbo[modelOf(s.model)?.id] === false ? [(state.motionDmd ? 8 : s.steps) + " steps"] : []), mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
-      n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
+      n + (n === 1 ? " LoRA" : " LoRAs"), ...(s.sound === false ? ["No sound"] : [])].join(" · ");
   return [model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
-    s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
+    s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs"), ...(!isImage() && s.sound === false ? ["No sound"] : [])].join(" · ");
 }
 
 function progressText(c) {
@@ -1646,6 +1646,7 @@ function renderSettings() {
     </div>
 
     ${state.tab === "video" ? realismField(s) : ""}
+    ${state.tab === "video" ? soundField(s) : ""}
     ${lorasField(s)}
     ${state.tab === "video" ? refmodsField(s) : ""}
 
@@ -2147,6 +2148,17 @@ function realismField(s) {
         <span class="lora-val" id="realismVal">${Number(r.strength).toFixed(2)}</span>
       </div>
       <span class="hint">Natural, un-airbrushed skin. It joins after the first steps, so the composition stays as it would be. ${R.strength} is the H3 editor's setting.</span>
+    </div>`;
+}
+function soundField(s) {
+  const on = s.sound !== false;
+  return `<div class="field">
+      <span class="label">Sound</span>
+      <div class="lora ${on ? "" : "dim"}">
+        <button class="switch ${on ? "on" : ""}" data-act="toggleSound" aria-label="${on ? "Switch off" : "Switch on"} sound" aria-pressed="${on}"></button>
+        <div class="lora-body"><span class="lora-name">${on ? "Keep the sound H3 makes" : "Save the video without sound"}</span></div>
+      </div>
+      <span class="hint">H3 always makes sound with the picture, even for N/A. Off, it isn't kept: the video is silent, so you can add your own in Edit.</span>
     </div>`;
 }
 function lorasField(s) {
@@ -3437,6 +3449,7 @@ const ACT = {
     catch (error) { say(error.message); }
   },
   driveCancel: (id) => api("POST", `gdrive/${id}/cancel`).then((r) => driveJobs(r.jobs)).catch((e) => say(e.message)),
+  toggleSound: () => { state.settings.sound = state.settings.sound === false; saveUi(); render(); },
   toggleRealism: () => { const r = realismOf(state.settings); r.on = !r.on; saveUi(); render(); },
   swapThis: () => { const c = clipById(state.openId); if (c && c.status === "done" && c.file) openSwap(c); },
   menuSwap: () => { const id = closeMenu(); const c = clipById(id); if (c && c.status === "done" && c.file) openSwap(c); },
@@ -3734,7 +3747,7 @@ const ACT = {
     Object.assign(state.settings, { model, steps: c.steps, res: c.res, aspect: c.aspect, seedMode: "random",
       loras: c.loras.map((l) => ({ id: l.name, name: l.name, strength: l.strength, on: true })) },
       kindOf(c) === "image" ? { cfg: c.cfg } : { len: c.len, refmods: (c.refmods || []).filter((m) => RM.files.includes(m.file)),
-        realism: { on: !!c.realism, strength: c.realism || realismOf(state.settings).strength } },
+        realism: { on: !!c.realism, strength: c.realism || realismOf(state.settings).strength }, sound: !c.silent },
       { sampler: c.sampler || "", scheduler: c.scheduler || "" });
     if (kindOf(c) === "video") state.motion = c.motion && motionSource(c.motion.from) ? c.motion.from : null;
     if (c.motion?.method) state.motionMethod = c.motion.method;

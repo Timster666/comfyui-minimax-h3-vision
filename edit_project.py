@@ -27,7 +27,7 @@ VERSION = 1
 # What a clip keeps when it travels in a project.
 CLIP_FIELDS = ("id", "kind", "prompt", "model", "profile", "steps", "cfg", "res", "aspect", "len", "width", "height",
                "seed", "loras", "starred", "created", "imported", "found", "refs", "sampler", "scheduler", "negative",
-               "pictures", "refmods", "faces", "realism", "swap", "motion")
+               "pictures", "refmods", "faces", "realism", "swap", "motion", "silent")
 IMAGE_FIELDS = ("id", "name", "file", "added", "kind", "seconds", "width", "height", "audio", "sound")
 # A clip's fields that name the video it was made from.
 SOURCE_FIELDS = ("motion", "swap", "faces")
