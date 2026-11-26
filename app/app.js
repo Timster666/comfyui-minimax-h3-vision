@@ -649,6 +649,25 @@ function renderPrunaBar() {
     ${row("Close-ups", ["hands", "feet"])}`;
 }
 
+// A reference video in the prompt bar plays, with its sound, while the pointer is on it. A browser allows sound only
+// after a click on the page; until then it plays muted.
+$("refs").addEventListener("mouseover", (e) => {
+  const pic = e.target.closest("[data-hover-video]");
+  if (!pic || pic.querySelector("video")) return;
+  const v = document.createElement("video");
+  v.className = "ref-hover";
+  v.src = pic.dataset.hoverVideo;
+  v.playsInline = true;
+  v.loop = true;
+  pic.append(v);
+  v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+});
+$("refs").addEventListener("mouseout", (e) => {
+  const pic = e.target.closest("[data-hover-video]");
+  if (!pic || pic.contains(e.relatedTarget)) return;
+  pic.querySelector("video.ref-hover")?.remove();
+});
+
 function renderRefs() {
   renderNegative();
   renderPrunaBar();
@@ -673,7 +692,7 @@ function renderRefs() {
   const full = have.Picture >= REF_MAX.Picture && have.Video >= REF_MAX.Video;
   $("refs").innerHTML = strip.map((r, i) => `
     <div class="ref ${named.has(r.tag + " " + r.n) ? "used" : ""}">
-      <span class="ref-pic" style="background:${r.tone}" draggable="true" data-drag-ref="${r.id}" data-replace-ref="${r.id}" data-act="showRef" data-id="${r.id}" title="${esc(r.name)} · click to see it in Add image. Drag it onto the text to write &lt;${r.tag} ${r.n}&gt;, or onto another one to change the order."><img src="${r.img}" alt="" draggable="false">${isVideoRef(r) ? `<span class="ref-video">${ICON.play || "▶"}${r.seconds ? Number(r.seconds).toFixed(1) + " s" : ""}${r.audio && r.sound === false ? " · muted" : ""}</span>` : ""}
+      <span class="ref-pic" style="background:${r.tone}" draggable="true" data-drag-ref="${r.id}" data-replace-ref="${r.id}" data-act="showRef" data-id="${r.id}" ${isVideoRef(r) ? `data-hover-video="${r.video}"` : ""} title="${esc(r.name)} · click to see it in Add image. Drag it onto the text to write &lt;${r.tag} ${r.n}&gt;, or onto another one to change the order."><img src="${r.img}" alt="" draggable="false">${isVideoRef(r) ? `<span class="ref-video">${ICON.play || "▶"}${r.seconds ? Number(r.seconds).toFixed(1) + " s" : ""}${r.audio && r.sound === false ? " · muted" : ""}</span>` : ""}
         <button class="ref-x" data-act="removeRef" data-id="${r.id}" aria-label="Take ${r.tag} ${r.n} out of the prompt bar">${ICON.x}</button>
       </span>
       <button class="ref-name pic-tag" data-act="insertPicture" data-id="${i}" title="Put &lt;${r.tag} ${r.n}&gt; in the prompt at the cursor">${r.tag} ${r.n}</button>
