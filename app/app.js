@@ -673,7 +673,7 @@ function renderRefs() {
   const full = have.Picture >= REF_MAX.Picture && have.Video >= REF_MAX.Video;
   $("refs").innerHTML = strip.map((r, i) => `
     <div class="ref ${named.has(r.tag + " " + r.n) ? "used" : ""}">
-      <span class="ref-pic" style="background:${r.tone}" draggable="true" data-drag-ref="${r.id}" data-replace-ref="${r.id}" data-act="showRef" data-id="${r.id}" ${isVideoRef(r) ? `data-hover-video="${r.video}"` : ""} title="${esc(r.name)} · click to see it in Add image. Drag it onto the text to write &lt;${r.tag} ${r.n}&gt;, or onto another one to change the order."><img src="${r.img}" alt="" draggable="false">${isVideoRef(r) ? `<span class="ref-video">${ICON.play || "▶"}${r.seconds ? Number(r.seconds).toFixed(1) + " s" : ""}${r.audio && r.sound === false ? " · muted" : ""}</span>` : ""}
+      <span class="ref-pic" style="background:${r.tone}" draggable="true" data-drag-ref="${r.id}" data-replace-ref="${r.id}" data-act="showRef" data-id="${r.id}" ${isVideoRef(r) ? `data-hover-video="${r.video}"` : ""} title="${esc(r.name)} · click to see it in Add image. Drag it onto the text to write &lt;${r.tag} ${r.n}&gt;, or onto another one to change the order."><img src="${r.img}" alt="" draggable="false">${isVideoRef(r) ? `<span class="ref-video">${ICON.play || "▶"}${r.seconds ? Number(r.seconds).toFixed(1) + " s" : ""}${r.audio && r.sound ? " · sound" : ""}</span>` : ""}
         <button class="ref-x" data-act="removeRef" data-id="${r.id}" aria-label="Take ${r.tag} ${r.n} out of the prompt bar">${ICON.x}</button>
       </span>
       <button class="ref-name pic-tag" data-act="insertPicture" data-id="${i}" title="Put &lt;${r.tag} ${r.n}&gt; in the prompt at the cursor">${r.tag} ${r.n}</button>
@@ -1486,7 +1486,7 @@ function renderLibList() {
     + (items.length ? items.map((r) => `
       <div class="lib-item ${r.id === state.library.selected ? "on" : ""}" data-act="libSelect" data-id="${r.id}" role="option" tabindex="${r.id === state.library.selected ? 0 : -1}" aria-selected="${r.id === state.library.selected}" draggable="true" data-drag-ref="${r.id}" title="Drag into the prompt">
         <span class="lib-thumb" style="background:${r.tone}"><img src="${r.img}" alt="" draggable="false"></span>
-        <span class="lib-text"><span class="lib-name">@${esc(r.name)}</span><span class="lib-sub">${isVideoRef(r) ? "Video" + (r.seconds ? " · " + Number(r.seconds).toFixed(1) + " s" : "") + (r.audio ? (r.sound === false ? " · sound off" : " · sound") : "") : "Image"}${state.attached.includes(r.id) ? " · in the prompt bar" : ""}</span></span>
+        <span class="lib-text"><span class="lib-name">@${esc(r.name)}</span><span class="lib-sub">${isVideoRef(r) ? "Video" + (r.seconds ? " · " + Number(r.seconds).toFixed(1) + " s" : "") + (r.audio ? (r.sound ? " · sound on" : " · sound off") : "") : "Image"}${state.attached.includes(r.id) ? " · in the prompt bar" : ""}</span></span>
       </div>`).join("")
     : `<span class="lib-none">${state.refs.some((r) => !r.from_clip) ? `No images match "${esc(state.library.query)}".` : "No uploads yet. Upload one, or drop images anywhere on the page."}</span>`);
 }
@@ -1522,7 +1522,7 @@ function renderLibPreview() {
   $("libPreview").innerHTML = `
     ${isVideoRef(r) ? `<div class="lib-big" draggable="true" data-drag-ref="${r.id}" title="Drag into the prompt"><video src="${r.video}" poster="${r.img}" controls playsinline preload="metadata"></video></div>
     <p class="lib-caption">${r.seconds ? Number(r.seconds).toFixed(1) + " s" : ""}. H3 uses up to 15 s of it, cut to the render's length.</p>
-    ${r.audio ? `<label class="lib-sound"><input type="checkbox" data-change="refSound" data-id="${r.id}" ${r.sound !== false ? "checked" : ""}> Use its sound <span class="hint">${r.sound !== false ? "H3 hears it: a voice, music or effects can carry over" : "H3 doesn't hear it, and makes the sound from the prompt"}</span></label>` : `<p class="hint">It has no sound.</p>`}`
+    ${r.audio ? `<label class="lib-sound"><input type="checkbox" data-change="refSound" data-id="${r.id}" ${r.sound ? "checked" : ""}> Use its sound <span class="hint">${r.sound ? "H3 hears it: a voice, music or effects can carry over" : "H3 doesn't hear it, and makes the sound from the prompt"}</span></label>` : `<p class="hint">It has no sound.</p>`}`
     : `<div class="lib-big" draggable="true" data-drag-ref="${r.id}" data-act="zoomPic" title="Click to see it bigger. Drag into the prompt"><img src="${r.img}" alt="@${esc(r.name)}" draggable="false"></div>`}
     ${libButton(r.id, inBar)}`;
 }
