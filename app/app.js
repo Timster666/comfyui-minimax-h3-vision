@@ -297,10 +297,12 @@ const stepsText = (n, rec) => n + (n === rec ? " · recommended" : "");
 
 function summary() {
   const s = state.settings;
+  // Long model names are cut to their first 20 characters here; the settings show them whole.
+  const model = s.model && s.model.length > 20 ? s.model.slice(0, 20).trimEnd() + "…" : s.model;
   const n = activeLoras().length;
   if (isKlein()) {
     const m = modelOf(s.model), [w, h] = kleinSize();
-    return [s.model, s.steps + " steps", ...(m.base ? ["Guidance " + s.cfg] : []), s.size === "match" ? (swapOn() ? "Match the body" : "Match image 1") : s.aspect,
+    return [model, s.steps + " steps", ...(m.base ? ["Guidance " + s.cfg] : []), s.size === "match" ? (swapOn() ? "Match the body" : "Match image 1") : s.aspect,
       w + "×" + h, s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   }
   if (isPruna()) {
@@ -311,13 +313,13 @@ function summary() {
   }
   if (editOn()) {
     const size = editSize();
-    return ["Edit", s.model, s.steps + " steps", "Guidance " + s.cfg, size ? size.join("×") : mpText(s.res),
+    return ["Edit", model, s.steps + " steps", "Guidance " + s.cfg, size ? size.join("×") : mpText(s.res),
       s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   }
   if (!isImage() && state.motion && motionSource(state.motion))
-    return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? s.model + " (can't do Motion: pick another model)" : s.model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
+    return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? model + " (can't do Motion: pick another model)" : model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
       n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
-  return [s.model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
+  return [model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
     s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
 }
 
