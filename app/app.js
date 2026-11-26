@@ -63,6 +63,7 @@ const state = {
   motionWhy: { tara: null, swap: null },  // why a method can't run here (from GET swap)
   motionPeople: [],          // Motion's picked people: [{x, y, picture}], painted in PEOPLE_COLORS' order
   motionExtra: "",           // instructions added to the end of the prompt Vision writes for them
+  motionDmd: true,           // a model that isn't a turbo gets the DMD 8-step turbo LoRA; off: its own Steps
   motionMarks: false,        // whether SAM 3.1 is here to mark them
   motionTurbo: {},           // per model id that Motion can use: whether it runs its own way (a turbo build)
   pickingMotion: false,      // the next video clicked in the gallery becomes Motion from
@@ -317,7 +318,8 @@ function summary() {
       s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   }
   if (!isImage() && state.motion && motionSource(state.motion))
-    return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? model + " (can't do Motion: pick another model)" : model, mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
+    return ["Motion from a video (" + ({ tara: "TARA", guide: "v1.0", swap: "Character Swap" })[motionMethodNow()] + ")", modelOf(s.model)?.scheduler === "hyperflow" ? model + " (can't do Motion: pick another model)" : model,
+      ...(state.motionTurbo[modelOf(s.model)?.id] === false ? [(state.motionDmd ? 8 : s.steps) + " steps"] : []), mpText(s.res), "the video's shape and length", s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed",
       n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
   return [model, s.steps + " steps", ...(isImage() ? ["Guidance " + s.cfg] : []), mpText(s.res), s.aspect, ...(isImage() ? [] : [s.len + " s"]),
     s.seedMode === "fixed" ? "Seed " + s.seed : "Random seed", n + (n === 1 ? " LoRA" : " LoRAs")].join(" · ");
@@ -349,7 +351,7 @@ function saveUi() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     state.drafts[draftKey()] = state.prompt;
-    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, motionMethod: state.motionMethod, motionPeople: state.motionPeople, motionExtra: state.motionExtra, perRow: state.perRow,
+    api("PUT", "ui", { settings: state.videoSettings, imageSettings: state.imageSettings, attached: state.attached, motion: state.motion, motionMethod: state.motionMethod, motionPeople: state.motionPeople, motionExtra: state.motionExtra, motionDmd: state.motionDmd, perRow: state.perRow,
       prompt: state.drafts.video, imagePrompt: state.drafts.image, imageNegative: state.negative, negativeOpen: state.negativeOpen,
       kleinSettings: state.kleinSettings, kleinPrompt: state.drafts.klein, kleinSlots: state.kleinSlots,
       kleinMode: state.kleinMode, kleinSwapSlots: state.kleinSwapSlots, kleinSwapPrompt: state.drafts.kleinSwap, kleinSwapMask: state.kleinSwapMask,
@@ -773,9 +775,11 @@ function motionNote(model) {
   const turbo = state.motionTurbo[model.id];
   const how = turbo === undefined ? "HyperFlow can't do Motion: pick another model."
     : turbo ? `${esc(model.name)} runs its own way: its own steps and sampler, without the DMD LoRA (untested with these LoRAs).`
-    : `${esc(model.name)} gets the DMD 8-step turbo LoRA: 8 steps, Euler, whatever Steps says.`;
+    : state.motionDmd ? `${esc(model.name)} gets the DMD 8-step turbo LoRA: 8 steps, Euler, whatever Steps says.`
+    : `${esc(model.name)} runs without the DMD turbo LoRA, on Steps, Sampler and Scheduler below: slower, and untested with the motion LoRAs.`;
+  const dmd = turbo === false ? `<label class="motion-dmd"><input type="checkbox" data-change="motionDmd" ${state.motionDmd ? "checked" : ""}> Use the DMD 8-step turbo LoRA (the author's way)</label>` : "";
   return `<div class="motion-note"><b>Motion from a video is on.</b> ${how} Aspect ratio and Length come from the video;
-    Realism and RefMods aren't used. Model, Resolution, Seed and LoRAs apply.</div>`;
+    Realism and RefMods aren't used. Model, Resolution, Seed and LoRAs apply.${dmd}</div>`;
 }
 
 // TARA when it can run here, else Motion Transfer v1.0.
@@ -2660,6 +2664,7 @@ function generateBody() {
     pictures: state.tab === "video" ? state.attached.filter((id) => state.refs.some((r) => r.id === id)) : undefined,
     motion: state.tab === "video" && state.motion && motionSource(state.motion) ? state.motion : undefined,
     motionMethod: motionMethodNow(),
+    motionDmd: state.motionDmd,
     motionPeople: state.tab === "video" && state.motion && motionSource(state.motion) && state.motionPeople.length ? state.motionPeople : undefined,
     motionExtra: state.motionPeople.length && state.motionExtra.trim() ? state.motionExtra.trim() : undefined } };
 }
@@ -3848,6 +3853,7 @@ const CHANGE = {
   swapLora: (el) => { state.kleinSettings.swapLora = el.value; render(); },
   swapModel: (el) => { SWAP.model = el.value; drawSwap(); },
   motionMethod: (el) => { state.motionMethod = el.value; render(); saveUi(); },
+  motionDmd: (el) => { state.motionDmd = el.checked; renderSettings(); $("pill").textContent = summary(); saveUi(); },
   peoplePicture: (el) => { state.motionPeople[Number(el.dataset.index)].picture = Number(el.value); saveUi(); },
   sheetRole: (el) => { state.prunaSheet.roles[Number(el.dataset.id)] = el.value; render(); saveUi(); },
   sampler: (el) => { state.settings.sampler = el.value; render(); },
@@ -4563,6 +4569,7 @@ async function load(first = true) {
       state.motionMethod = ["guide", "swap"].includes(ui.motionMethod) ? ui.motionMethod : "tara";
       state.motionPeople = state.motion && Array.isArray(ui.motionPeople) ? ui.motionPeople : [];
       state.motionExtra = typeof ui.motionExtra === "string" ? ui.motionExtra : "";
+      state.motionDmd = ui.motionDmd !== false;
       state.perRow = ui.perRow || 3;
       state.prompt = state.drafts[state.tab];
       state.caret = state.prompt.length;

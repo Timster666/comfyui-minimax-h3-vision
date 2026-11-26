@@ -330,7 +330,7 @@ def motion_prompt(prompt):
 
 
 def build(clip, images, source, mode, details="", megapixels=0.6, files=None, name=None, mark=None, model=BASE, method="guide",
-          people=None, extra=""):
+          people=None, extra="", dmd=True):
     """The graph that swaps the picture's character (or head) into a video.
 
     clip: the new clip: the picture as <Picture 1>, the seed, and the prompt (made here from the template).
@@ -342,7 +342,8 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
     Motion Transfer TARA v1.0 the author's way, "guide" Motion Transfer v1.0. people: Motion's picked people,
     [{x, y, picture, color}]: each painted in its colour on the guide; with an empty prompt, the prompt is written for
     them, each picture described by MOSS-Image's text model (or called "the character" without it), with extra (the
-    person's own instructions, as Henge adds a request) at the end.
+    person's own instructions, as Henge adds a request) at the end. dmd False (Motion only): a model that isn't a
+    turbo runs without the DMD turbo LoRA, on the clip's own steps, sampler and scheduler.
     """
     files = h3_graph.available() if files is None else files
     spec = MODES[mode]
@@ -358,10 +359,13 @@ def build(clip, images, source, mode, details="", megapixels=0.6, files=None, na
                                "(qwen3.5_9b_w4a8_gptq.safetensors)." % ("character" if mode == "character" else "face"))
     profile = h3_graph.PROFILES[model]
     own = turbo(model)
+    full = motion and not own and not dmd
     clip = dict(clip, profile=model, refmods=None, realism=None,
-                steps=profile["steps"] if own else STEPS, sampler=profile["sampler"] if own else SAMPLER,
-                scheduler=(profile.get("scheduler") or spec["scheduler"]) if own else spec["scheduler"],
-                loras=([] if own else [{"name": TURBO, "strength": 1.0}])
+                steps=int(clip["steps"]) if full else profile["steps"] if own else STEPS,
+                sampler=(clip.get("sampler") or profile["sampler"]) if full else profile["sampler"] if own else SAMPLER,
+                scheduler=(clip.get("scheduler") or spec["scheduler"]) if full
+                else (profile.get("scheduler") or spec["scheduler"]) if own else spec["scheduler"],
+                loras=([] if own or full else [{"name": TURBO, "strength": 1.0}])
                 + [{"name": TARA_LORA if tara else MODES["character"]["lora"] if swapping else spec["lora"], "strength": 1.0}]
                 + (list(clip.get("loras") or []) if motion else []),
                 prompt=with_extra(people_prompt(people, SWAP_TRIGGER, solid=True) if swapping else people_prompt(people), extra) if auto
