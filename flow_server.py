@@ -679,8 +679,19 @@ async def image_poster(request):
 
 
 async def rename_image(request):
+    """PATCH {name} renames a reference; {sound} says whether a reference video's sound goes to H3 with it."""
     image_id = request.match_info["id"]
-    name = str((await request.json()).get("name", ""))
+    body = await request.json()
+    if "sound" in body and "name" not in body:
+        async with _lock:
+            data = read_project()
+            image = next((i for i in data["images"] if i["id"] == image_id and i.get("kind") == "video"), None)
+            if not image:
+                raise web.HTTPNotFound(text="No such video.")
+            image["sound"] = bool(body["sound"])
+            write_project(data)
+        return web.json_response({"image": image})
+    name = str(body.get("name", ""))
     if not NAME_RE.match(name):
         raise web.HTTPBadRequest(text="Names need letters, digits or _.")
     async with _lock:
