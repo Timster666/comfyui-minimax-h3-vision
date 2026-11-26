@@ -612,7 +612,8 @@ async def upload_images(request):
             if not part.filename:
                 continue
             ext = os.path.splitext(part.filename)[1].lower()
-            if ext not in IMAGE_TYPES:
+            video = ext in clip_info.VIDEO_TYPES
+            if ext not in IMAGE_TYPES and not video:
                 continue
             image_id = "i" + uuid.uuid4().hex[:10]
             file = image_id + ext
@@ -622,16 +623,58 @@ async def upload_images(request):
                     if not chunk:
                         break
                     f.write(chunk)
+            facts = {}
+            if video:
+                # A reference video: as H.264 when a browser couldn't play it, with its length and whether it has sound.
+                try:
+                    found, path, ext = await asyncio.to_thread(plain_video, root_dir("images", file))
+                except Exception as error:
+                    LOG.warning("MiniMax H3 Vision: couldn't read %s: %s", part.filename, error)
+                    for leftover in (root_dir("images", file), root_dir("images", image_id + "_h264.mp4")):
+                        if os.path.exists(leftover):
+                            os.remove(leftover)
+                    continue
+                file = os.path.basename(path)
+                facts = {"kind": "video", "seconds": found["seconds"], "width": found["width"], "height": found["height"],
+                         "audio": await asyncio.to_thread(has_sound, path)}
             base = re.sub(r"[^a-z0-9_]+", "_", os.path.splitext(part.filename)[0].lower()).strip("_")[:16] or "image"
             name, n = base, 2
             while name in taken:
                 name, n = "%s%d" % (base, n), n + 1
             taken.add(name)
-            image = {"id": image_id, "name": name, "file": file, "added": time.time()}
+            image = {"id": image_id, "name": name, "file": file, "added": time.time(), **facts}
             data["images"].append(image)
             added.append(image)
         write_project(data)
     return web.json_response({"images": added})
+
+
+def has_sound(path):
+    import av
+    with av.open(path) as container:
+        return bool(container.streams.audio)
+
+
+async def image_poster(request):
+    """A reference video's first frame as a JPEG, for its thumbnails (made the first time it's asked for)."""
+    image_id = request.match_info["id"]
+    image = next((i for i in read_project()["images"] if i["id"] == image_id and i.get("kind") == "video"), None)
+    if not image:
+        raise web.HTTPNotFound(text="No such video.")
+    poster = root_dir("images", image_id + "_poster.jpg")
+    if not os.path.exists(poster):
+        def first_frame():
+            import av
+            with av.open(image_path(image)) as container:
+                frame = next(container.decode(video=0))
+                picture = frame.to_image()
+                picture.thumbnail((640, 640))
+                picture.save(poster, quality=85)
+        try:
+            await asyncio.to_thread(first_frame)
+        except Exception as error:
+            raise web.HTTPNotFound(text="Couldn't read the video: %s" % error)
+    return web.FileResponse(poster, headers={"Cache-Control": "max-age=86400"})
 
 
 async def rename_image(request):
@@ -699,7 +742,10 @@ def sent_of(graph):
         if cls == refmod_bridge.LOADER:
             mods += ["%s (strength %g)" % (node["inputs"]["mod_%d" % n], node["inputs"]["strength_%d" % n])
                      for n in range(1, refmod_bridge.SLOTS + 1) if node["inputs"].get("mod_%d" % n) not in (None, "(none)")]
-    return texts, pictures, mods, unets
+    # Reference videos: the loaders wired into the reference node's ref_videos, in order.
+    refs = (graph.get("10") or {}).get("inputs", {})
+    videos = [os.path.basename(graph[str(refs[k][0])]["inputs"]["file"]) for k in sorted(refs) if k.startswith("ref_videos.")]
+    return texts, pictures, mods, unets, videos
 
 
 async def preview(request):
@@ -708,12 +754,13 @@ async def preview(request):
     try:
         await generate(request)
     except _Preview as stop:
-        texts, pictures, mods, unets = sent_of(stop.graph)
+        texts, pictures, mods, unets, videos = sent_of(stop.graph)
         body = await request.json()
         async with _lock:
             names = {i["file"]: i["name"] for i in read_project()["images"]}
         pictures = ["%s (%s)" % (names[f], f) if f in names else f for f in pictures]
-        return web.json_response({"texts": texts, "pictures": pictures, "refmods": mods, "files": unets,
+        videos = ["%s (%s)" % (names[f], f) if f in names else f for f in videos]
+        return web.json_response({"texts": texts, "pictures": pictures, "videos": videos, "refmods": mods, "files": unets,
                                   "model": (body.get("settings") or {}).get("model")})
     finally:
         _PREVIEW.reset(token)
@@ -817,6 +864,8 @@ async def generate(request):
             if frames < (swap.TARA_MIN_FRAMES if method == "tara" else 5):
                 raise web.HTTPBadRequest(text="That video is too short: TARA needs at least 2 seconds." if method == "tara"
                                          else "That video is too short for H3.")
+            if any(p.get("kind") == "video" for p in pictures or []):
+                raise web.HTTPBadRequest(text="Motion from… takes pictures only: take the reference videos out of the prompt bar.")
             people = clean_people(body.get("motionPeople"), len(pictures))
             if people and not swap.sam():
                 raise web.HTTPBadRequest(text="Picking the people needs SAM 3.1 (gear menu › Models › Swap and Motion).")
@@ -870,7 +919,7 @@ async def generate_image(prompt, s, negative=None, edit=None):
     if edit:
         # Edit: the picture from the Add image library, and the edit LoRA's settings.
         async with _lock:
-            source = next((i for i in read_project()["images"] if i["id"] == edit), None)
+            source = next((i for i in read_project()["images"] if i["id"] == edit and i.get("kind") != "video"), None)
         if not source or not os.path.exists(image_path(source)):
             raise web.HTTPBadRequest(text="The picture to edit isn't in the Add image library any more.")
         if not moss_bridge.edit_lora():
@@ -977,6 +1026,8 @@ async def generate_klein(prompt, s, slots, negative=None, swap=False, mask=None)
         image = by_id.get(image_id)
         if not image:
             raise web.HTTPBadRequest(text="The picture in image %d isn't in the Add image library any more." % n)
+        if image.get("kind") == "video":
+            raise web.HTTPBadRequest(text="Slot %d holds a video: this model takes pictures." % n)
         if not os.path.exists(image_path(image)):
             raise web.HTTPBadRequest(text="The picture in image %d (%s) is missing its file." % (n, image["name"]))
         pictures.append((n, image))
@@ -1079,6 +1130,8 @@ async def generate_pruna(prompt, s, body):
         image = by_id.get(image_id)
         if not image:
             raise web.HTTPBadRequest(text="The picture in slot %d isn't in the Add image library any more." % n)
+        if image.get("kind") == "video":
+            raise web.HTTPBadRequest(text="Slot %d holds a video: this model takes pictures." % n)
         if not os.path.exists(image_path(image)):
             raise web.HTTPBadRequest(text="The picture in slot %d (%s) is missing its file." % (n, image["name"]))
         pictures.append((n, image))
@@ -1498,7 +1551,7 @@ async def faces(request):
         if not source or source.get("kind", "video") != "video" or source.get("status") != "done" or not source.get("file"):
             raise web.HTTPBadRequest(text="Only a finished video can have its faces refined.")
         images = list(data["images"])
-        face = next((i for i in images if i["id"] == body.get("face")), None) if body.get("face") else None
+        face = next((i for i in images if i["id"] == body.get("face") and i.get("kind") != "video"), None) if body.get("face") else None
         if body.get("face") and not face:
             raise web.HTTPBadRequest(text="That face picture isn't in Add image any more.")
     path = clip_path(source)
@@ -1563,7 +1616,7 @@ async def swaps(request):
             raise web.HTTPBadRequest(text="Only a finished video can be the guide of a swap.")
         images = list(data["images"])
         by_id = {i["id"]: i for i in images}
-        cast = [by_id[body["picture"]]] if body.get("picture") in by_id else []
+        cast = [by_id[body["picture"]]] if body.get("picture") in by_id and by_id[body["picture"]].get("kind") != "video" else []
         if not cast:
             raise web.HTTPBadRequest(text="Pick the picture of the %s." % ("character" if mode == "character" else "head"))
         picture = cast[0]
@@ -1999,6 +2052,7 @@ ROUTES = (
     ("POST", "/mmflow/api/models/{id}/{action}", models_action),
     ("POST", "/mmflow/api/images/from-clip", image_from_clip),
     ("PATCH", "/mmflow/api/images/{id}", rename_image),
+    ("GET", "/mmflow/api/images/{id}/poster", image_poster),
     ("POST", "/mmflow/api/generate", generate),
     ("GET", "/mmflow/api/faces", faces),
     ("POST", "/mmflow/api/clips/{id}/faces", faces),
