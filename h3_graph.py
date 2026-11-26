@@ -22,6 +22,9 @@ LORA_NODE = 100         # the clip's own LoRAs are nodes 100, 101, ...
 LORA_LIMIT = 8
 LORA_RANGE = (-2.0, 2.0)
 H3_PICTURES = 9         # H3 takes at most nine pictures
+H3_VIDEOS = 3           # and three reference videos (2 to 15 s; it cuts them to the render's length)
+REF_VIDEO_FRAMES = 361  # 15 s at 24 fps
+REF_VIDEO_NODE = 44     # the reference videos' loaders: 44 to 46
 SHIFT_VIDEO, SHIFT_AUDIO = 12.0, 3.0
 
 # H3's text encoder and VAEs are published in several precisions: the first one installed is used.
@@ -280,15 +283,20 @@ def clean_pictures(ids, images, prompt=""):
     for image_id in ids or []:
         image = by_id.get(image_id)
         if not image:
-            raise ValueError("Picture %d isn't in Add image any more." % (len(out) + 1))
+            raise ValueError("Reference %d isn't in Add image any more." % (len(out) + 1))
         if image_id not in [p["id"] for p in out]:
-            out.append({"id": image["id"], "name": image["name"]})
-    if len(out) > H3_PICTURES:
-        raise ValueError("H3 takes at most %d pictures; there are %d. Take some out." % (H3_PICTURES, len(out)))
-    for number in sorted({int(n) for n in PICTURE_TAG.findall(prompt)}):
-        if number < 1 or number > len(out):
-            raise ValueError("The prompt names <Picture %d>, but there %s." % (
-                number, "is 1 picture" if len(out) == 1 else "are %d pictures" % len(out)))
+            out.append({"id": image["id"], "name": image["name"], **({"kind": "video"} if image.get("kind") == "video" else {})})
+    videos = sum(1 for p in out if p.get("kind") == "video")
+    pictures = len(out) - videos
+    if pictures > H3_PICTURES:
+        raise ValueError("H3 takes at most %d pictures; there are %d. Take some out." % (H3_PICTURES, pictures))
+    if videos > H3_VIDEOS:
+        raise ValueError("H3 takes at most %d reference videos; there are %d. Take some out." % (H3_VIDEOS, videos))
+    for tag, count, word in (("Picture", pictures, "picture"), ("Video", videos, "video")):
+        for number in sorted({int(n) for n in re.findall(r"<%s (\d+)>" % tag, prompt)}):
+            if number < 1 or number > count:
+                raise ValueError("The prompt names <%s %d>, but there %s." % (
+                    tag, number, "is no %s" % word if not count else "is 1 %s" % word if count == 1 else "are %d %ss" % (count, word)))
     return out
 
 
@@ -322,8 +330,11 @@ def build_graph(clip, images, files=None, name=None):
     verbatim = clip.get("pictures") is not None
     if verbatim:
         # The Video tab's pictures, in their order: the prompt says <Picture N> and defines its own subjects.
+        # Pictures are <Picture N> and videos <Video N>, each counted in their own order.
         by_id = {image["id"]: image for image in images}
-        cast = [by_id[p["id"]] for p in clip["pictures"] if p["id"] in by_id][:H3_PICTURES]
+        refs = [by_id[p["id"]] for p in clip["pictures"] if p["id"] in by_id]
+        cast = [r for r in refs if r.get("kind") != "video"][:H3_PICTURES]
+        videos = [r for r in refs if r.get("kind") == "video"][:H3_VIDEOS]
     else:
         # An older clip: the @images in the prompt, in the order they were uploaded, one subject with one picture each.
         by_name = {image["name"].lower(): image for image in images}
@@ -332,13 +343,14 @@ def build_graph(clip, images, files=None, name=None):
             image = by_name.get(word.lower())
             if image and image["id"] not in mentioned:
                 mentioned.append(image["id"])
-        cast = [image for image in images if image["id"] in mentioned][:H3_PICTURES]
+        cast = [image for image in images if image["id"] in mentioned and image.get("kind") != "video"][:H3_PICTURES]
+        videos = []
 
     # A family's fl2va model takes a prompt alone. Anything with pictures, or with RefMods (references too, which
     # only the ref2va model reads), goes to its ref2va model.
-    unet = unet_ref if cast or clip.get("refmods") or not unet_text else unet_text
-    text_only = unet == unet_text and not cast
-    if cast and verbatim:
+    unet = unet_ref if cast or videos or clip.get("refmods") or not unet_text else unet_text
+    text_only = unet == unet_text and not cast and not videos
+    if (cast or videos) and verbatim:
         prompt = clip["prompt"].strip()
     elif cast:
         prompt = compose_reference_prompt("", clip["prompt"], subjects=[{"name": i["name"], "picture_count": 1} for i in cast])
@@ -376,6 +388,15 @@ def build_graph(clip, images, files=None, name=None):
             node = str(50 + index)
             graph[node] = {"class_type": "MMVisionLoadStill", "inputs": {"file": "%s/images/%s" % (ROOT, image["file"])}}
             graph["10"]["inputs"]["ref_images.ref_image_%s" % index] = [node, 0]
+        for index, video in enumerate(videos):
+            # At 24 fps and at most 15 s; the node sizes it to the render and cuts it to the render's length. Its
+            # sound goes along as the video's soundtrack.
+            node = str(REF_VIDEO_NODE + index)
+            graph[node] = {"class_type": "MMVisionLoadGuide", "inputs": {
+                "file": "%s/images/%s" % (ROOT, video["file"]), "megapixels": 1.0, "max_frames": REF_VIDEO_FRAMES}}
+            graph["10"]["inputs"]["ref_videos.ref_video_%s" % index] = [node, 0]
+            if video.get("audio"):
+                graph["10"]["inputs"]["ref_video_audios.ref_video_audio_%s" % index] = [node, 1]
     if is_hyperflow(unet):
         # Few-step and CFG-free, on its own two-time schedule.
         graph["1"] = {"class_type": "MMVisionHyperFlowLoader", "inputs": {"unet_name": unet}}
