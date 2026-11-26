@@ -1890,7 +1890,8 @@ async def pack_clip(clip_id):
     file = free_name(folder, os.path.splitext(clip["file"])[0], ".zip")
     try:
         counts = await asyncio.to_thread(edit_project.pack_clip, clip, clip_path, os.path.join(folder, file),
-                                         data["images"], image_path)
+                                         data["images"], image_path,
+                                         {c["id"]: c for c in data["clips"] if c.get("kind", "video") == "video" and c.get("file")})
     except edit_project.Bad as error:
         raise web.HTTPBadRequest(text=str(error))
     except Exception as error:
