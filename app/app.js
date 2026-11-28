@@ -1486,7 +1486,7 @@ function renderLibList() {
     + (items.length ? items.map((r) => `
       <div class="lib-item ${r.id === state.library.selected ? "on" : ""}" data-act="libSelect" data-id="${r.id}" role="option" tabindex="${r.id === state.library.selected ? 0 : -1}" aria-selected="${r.id === state.library.selected}" draggable="true" data-drag-ref="${r.id}" title="Drag into the prompt">
         <span class="lib-thumb" style="background:${r.tone}"><img src="${r.img}" alt="" draggable="false"></span>
-        <span class="lib-text"><span class="lib-name">@${esc(r.name)}</span><span class="lib-sub">${isVideoRef(r) ? "Video" + (r.seconds ? " · " + Number(r.seconds).toFixed(1) + " s" : "") + (r.audio ? (r.sound ? " · sound on" : " · sound off") : "") : "Image"}${state.attached.includes(r.id) ? " · in the prompt bar" : ""}</span></span>
+        <span class="lib-text"><span class="lib-name" title="${esc(r.original || r.name)} · in prompts: @${esc(r.name)}">${esc(r.original || r.name)}</span><span class="lib-sub">${isVideoRef(r) ? "Video" + (r.seconds ? " · " + Number(r.seconds).toFixed(1) + " s" : "") + (r.audio ? (r.sound ? " · sound on" : " · sound off") : "") : "Image"}${state.attached.includes(r.id) ? " · in the prompt bar" : ""}</span></span>
       </div>`).join("")
     : `<span class="lib-none">${state.refs.some((r) => !r.from_clip) ? `No images match "${esc(state.library.query)}".` : "No uploads yet. Upload one, or drop images anywhere on the page."}</span>`);
 }
