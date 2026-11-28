@@ -643,7 +643,9 @@ async def upload_images(request):
             while name in taken:
                 name, n = "%s%d" % (base, n), n + 1
             taken.add(name)
-            image = {"id": image_id, "name": name, "file": file, "added": time.time(), **facts}
+            # original: the uploaded file's own name, shown in the Add image list.
+            image = {"id": image_id, "name": name, "file": file, "added": time.time(),
+                     "original": os.path.basename(part.filename or "")[:120], **facts}
             data["images"].append(image)
             added.append(image)
         write_project(data)

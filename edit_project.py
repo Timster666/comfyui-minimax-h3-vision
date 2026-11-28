@@ -28,7 +28,7 @@ VERSION = 1
 CLIP_FIELDS = ("id", "kind", "prompt", "model", "profile", "steps", "cfg", "res", "aspect", "len", "width", "height",
                "seed", "loras", "starred", "created", "imported", "found", "refs", "sampler", "scheduler", "negative",
                "pictures", "refmods", "faces", "realism", "swap", "motion", "silent")
-IMAGE_FIELDS = ("id", "name", "file", "added", "kind", "seconds", "width", "height", "audio", "sound")
+IMAGE_FIELDS = ("id", "name", "file", "added", "original", "kind", "seconds", "width", "height", "audio", "sound")
 # A clip's fields that name the video it was made from.
 SOURCE_FIELDS = ("motion", "swap", "faces")
 MENTION = re.compile(r"@([A-Za-z0-9_]+)")
@@ -203,7 +203,7 @@ def unpack_images(z, project, images, images_dir, image_path, ids=None):
             name, n = "%s%d" % (base, n), n + 1
         taken.add(name)
         image = {"id": image_id, "name": name, "file": file, "added": record.get("added") or 0,
-                 **{k: record[k] for k in ("kind", "seconds", "width", "height", "audio", "sound") if k in record}}
+                 **{k: record[k] for k in ("original", "kind", "seconds", "width", "height", "audio", "sound") if k in record}}
         by_id[image_id] = image
         names[record["name"].lower()] = name
         if ids is not None:
